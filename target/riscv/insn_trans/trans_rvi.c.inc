@@ -18,6 +18,16 @@
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+
+/* xg233i ai instruction set */
+
+static bool trans_dma(DisasContext *ctx, arg_dma *a)
+{
+    gen_helper_dma(tcg_env, tcg_constant_tl(a->rs1), tcg_constant_tl(a->rs2), tcg_constant_tl(a->rd));
+    return true;
+}
+
+/* xg233i ai instruction set */
 static bool trans_illegal(DisasContext *ctx, arg_empty *a)
 {
     gen_exception_illegal(ctx);

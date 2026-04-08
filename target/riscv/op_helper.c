@@ -42,6 +42,26 @@ static inline MemOp mo_endian_env(CPURISCVState *env)
 }
 #endif
 
+/* xg233 ai instruction set*/
+void helper_dma(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
+{
+    int mmu_idx = riscv_env_mmu_index(env, false);
+    MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    target_ulong address = env->gpr[rs1];
+    target_ulong grain_size_val = env->gpr[rs2];
+    if(grain_size_val > 2) {
+        riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
+    }
+    int width = 8 << grain_size_val;
+    int height = 8 << grain_size_val;
+    for(int i = 0; i < width; i++) {
+        for(int j = 0; j < height; j++) {
+            target_ulong val = cpu_ldl_mmu(env, address + (i * width + j) * 4, oi, GETPC());
+            cpu_stl_mmu(env, env->gpr[rd] + (j * width + i) * 4, val, oi, GETPC());
+        }
+    }
+}
+
 /* Exceptions processing helpers */
 G_NORETURN void riscv_raise_exception(CPURISCVState *env,
                                       RISCVException exception,
