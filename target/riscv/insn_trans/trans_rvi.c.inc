@@ -26,6 +26,51 @@ static bool trans_dma(DisasContext *ctx, arg_dma *a)
     gen_helper_dma(tcg_env, tcg_constant_tl(a->rs1), tcg_constant_tl(a->rs2), tcg_constant_tl(a->rd));
     return true;
 }
+static bool trans_gemm(DisasContext *ctx, arg_gemm *a)
+{
+    gen_helper_gemm(tcg_env, tcg_constant_tl(a->rs1), tcg_constant_tl(a->rs2), tcg_constant_tl(a->rd));
+    return true;
+}
+static bool trans_sort(DisasContext *ctx, arg_sort *a)
+{
+    gen_helper_sort(tcg_env, tcg_constant_tl(a->rs1), tcg_constant_tl(a->rs2), tcg_constant_tl(a->rd));
+    return true;
+}
+static bool trans_vadd(DisasContext *ctx, arg_vadd *a)
+{
+    gen_helper_vadd(tcg_env, tcg_constant_tl(a->rs1), tcg_constant_tl(a->rs2), tcg_constant_tl(a->rd));
+    return true;
+}
+static bool trans_crush(DisasContext *ctx, arg_crush *a)
+{
+    gen_helper_crush(tcg_env, tcg_constant_tl(a->rs1), tcg_constant_tl(a->rs2), tcg_constant_tl(a->rd));
+    return true;
+}
+static bool trans_expand(DisasContext *ctx, arg_expand *a)
+{
+    gen_helper_expand(tcg_env, tcg_constant_tl(a->rs1), tcg_constant_tl(a->rs2), tcg_constant_tl(a->rd));
+    return true;
+}
+static bool trans_vdot(DisasContext *ctx, arg_vdot *a)
+{
+    gen_helper_vdot(tcg_env, tcg_constant_tl(a->rs1), tcg_constant_tl(a->rs2), tcg_constant_tl(a->rd));
+    return true;
+}
+static bool trans_vrelu(DisasContext *ctx, arg_vrelu *a)
+{
+    gen_helper_vrelu(tcg_env, tcg_constant_tl(a->rs1), tcg_constant_tl(a->rs2), tcg_constant_tl(a->rd));
+    return true;
+}
+static bool trans_vscale(DisasContext *ctx, arg_vscale *a)
+{
+    gen_helper_vscale(tcg_env, tcg_constant_tl(a->rs1), tcg_constant_tl(a->rs2), tcg_constant_tl(a->rd));
+    return true;
+}
+static bool trans_vmax(DisasContext *ctx, arg_vmax *a)
+{
+    gen_helper_vmax(tcg_env, tcg_constant_tl(a->rs1), tcg_constant_tl(a->rs2), tcg_constant_tl(a->rd));
+    return true;
+}
 
 /* xg233i ai instruction set */
 static bool trans_illegal(DisasContext *ctx, arg_empty *a)

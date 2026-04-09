@@ -4,6 +4,15 @@ DEF_HELPER_2(raise_exception, noreturn, env, i32)
 
 /* xg233 ai instruction set*/
 DEF_HELPER_4(dma, void, env, tl, tl, tl)
+DEF_HELPER_4(sort, void, env, tl, tl, tl)
+DEF_HELPER_4(gemm, void, env, tl, tl, tl)
+DEF_HELPER_4(vadd, void, env, tl, tl, tl)
+DEF_HELPER_4(crush, void, env, tl, tl, tl)
+DEF_HELPER_4(expand, void, env, tl, tl, tl)
+DEF_HELPER_4(vdot, void, env, tl, tl, tl)
+DEF_HELPER_4(vrelu, void, env, tl, tl, tl)
+DEF_HELPER_4(vscale, void, env, tl, tl, tl)
+DEF_HELPER_4(vmax, void, env, tl, tl, tl)
 
 /* Floating Point - rounding mode */
 DEF_HELPER_FLAGS_2(set_rounding_mode, TCG_CALL_NO_WG, void, env, i32)

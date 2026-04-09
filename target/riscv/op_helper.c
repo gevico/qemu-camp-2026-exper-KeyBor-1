@@ -62,6 +62,80 @@ void helper_dma(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_u
     }
 }
 
+void helper_sort(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
+{
+    int mmu_idx = riscv_env_mmu_index(env, false);
+    MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    uintptr_t retaddr = GETPC();
+    target_ulong array_addr = env->gpr[rs1];
+    int32_t array_size = cpu_ldl_mmu(env, env->gpr[rs2], oi, retaddr);
+    int32_t sort_num = cpu_ldl_mmu(env, env->gpr[rd], oi, retaddr);
+    if (sort_num <= 0 || array_size <= 0 || sort_num > array_size) {
+        return;
+    }
+    for(int i = 0; i < sort_num - 1; ++i) {
+        for(int j = 0; j < sort_num - i - 1; ++j) {
+            int32_t val1 = cpu_ldl_mmu(env, array_addr + j * sizeof(int32_t), oi, retaddr);
+            int32_t val2 = cpu_ldl_mmu(env, array_addr + (j + 1) * sizeof(int32_t), oi, retaddr);
+            if(val1 > val2) {
+                cpu_stl_mmu(env, array_addr + j * sizeof(int32_t), val2, oi, retaddr);
+                cpu_stl_mmu(env, array_addr + (j + 1) * sizeof(int32_t), val1, oi, retaddr);
+            }
+        }
+    }
+}
+
+void helper_gemm(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
+{
+
+    
+}
+void helper_vadd(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
+{
+
+}
+void helper_crush(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
+{
+    int mmu_idx = riscv_env_mmu_index(env, false);
+    MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    target_ulong retaddr = GETPC();
+    target_ulong src_addr = env->gpr[rs1];
+    int array_size = cpu_ldl_mmu(env, env->gpr[rs2], oi, retaddr);
+    target_ulong dst_addr = env->gpr[rd];
+
+    uint8_t *array = g_new(uint8_t, array_size);
+    uint8_t *dst_array = g_new(uint8_t, array_size / 2);
+    for(int i = 0; i < array_size; ++i) {
+        array[i] = cpu_ldl_mmu(env, src_addr + i * sizeof(uint8_t), oi, retaddr);
+    }
+    for(int i = 0; i < array_size / 2; ++i) {
+        dst_array[i] = ((array[i] >> 4) << 4) | (array[i + 1] >> 4);
+        cpu_stl_mmu(env, dst_addr + i * sizeof(uint8_t), dst_array[i], oi, retaddr);
+    }
+}
+
+void helper_expand(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
+{
+
+}
+void helper_vdot(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
+{
+
+}
+void helper_vrelu(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
+{
+
+}
+void helper_vscale(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
+{
+
+}
+
+void helper_vmax(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
+{
+
+}
+
 /* Exceptions processing helpers */
 G_NORETURN void riscv_raise_exception(CPURISCVState *env,
                                       RISCVException exception,
