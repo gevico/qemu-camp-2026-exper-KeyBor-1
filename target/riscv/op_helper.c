@@ -64,76 +64,247 @@ void helper_dma(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_u
 
 void helper_sort(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
 {
+    //获取当前mmu索引
     int mmu_idx = riscv_env_mmu_index(env, false);
+    //将内存属性和mmu索引封装成一个操作对象
     MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    //获取返回地址
     uintptr_t retaddr = GETPC();
+    //数组地址
     target_ulong array_addr = env->gpr[rs1];
-    int32_t array_size = cpu_ldl_mmu(env, env->gpr[rs2], oi, retaddr);
-    int32_t sort_num = cpu_ldl_mmu(env, env->gpr[rd], oi, retaddr);
-    if (sort_num <= 0 || array_size <= 0 || sort_num > array_size) {
+    //数组大小
+    uint32_t array_size = env->gpr[rs2];
+    //参与排序的个数
+    uint32_t sort_num = env->gpr[rd];
+    if (sort_num <= 0 || array_size <= 0) {
         return;
+    }
+    if( sort_num > array_size ) {
+        sort_num = array_size;
+    }
+    int32_t *array = g_new(int, array_size);
+    for(int i = 0; i < array_size; ++i) {
+        array[i] = cpu_ldl_mmu(env, array_addr + i * sizeof(int32_t), oi, retaddr);
     }
     for(int i = 0; i < sort_num - 1; ++i) {
         for(int j = 0; j < sort_num - i - 1; ++j) {
-            int32_t val1 = cpu_ldl_mmu(env, array_addr + j * sizeof(int32_t), oi, retaddr);
-            int32_t val2 = cpu_ldl_mmu(env, array_addr + (j + 1) * sizeof(int32_t), oi, retaddr);
-            if(val1 > val2) {
-                cpu_stl_mmu(env, array_addr + j * sizeof(int32_t), val2, oi, retaddr);
-                cpu_stl_mmu(env, array_addr + (j + 1) * sizeof(int32_t), val1, oi, retaddr);
+            if(array[j] > array[j + 1]) {
+                int temp = array[j];
+                array[j] = array[j + 1];
+                array[j + 1] = temp;
             }
         }
     }
+    for(int i = 0; i < array_size; ++i) {
+        cpu_stl_mmu(env, array_addr + i * sizeof(int32_t), array[i], oi, retaddr);
+    }
+    g_free(array);
 }
 
 void helper_gemm(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
 {
-
-    
+    const int M = 4;
+    const int N = 4;
+    int mmu_idx = riscv_env_mmu_index(env, false);
+    MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    target_ulong retaddr = GETPC();
+    target_ulong matrix_a = env->gpr[rs1];
+    target_ulong matrix_b = env->gpr[rs2];
+    target_ulong matrix_c = env->gpr[rd];
+    int *a_addr = g_new(int, M * N);
+    int *b_addr = g_new(int, M * N);
+    int *c_addr = g_new(int, M * N);
+    for(int i = 0; i < M * N; ++i) {
+        a_addr[i] = cpu_ldl_mmu(env, matrix_a + i * sizeof(int32_t), oi, retaddr);
+        b_addr[i] = cpu_ldl_mmu(env, matrix_b + i * sizeof(int32_t), oi, retaddr);
+    }
+    for(int i = 0; i < M; ++i) {
+        for(int k = 0; k < N; ++k) {
+            int acc = 0;
+            for(int j = 0; j < N; ++j) {
+                acc += a_addr[i * N + j] * b_addr[j * M + k];
+            }
+            c_addr[i * N + k] = acc;
+        }
+    }
+    for(int i = 0; i < M * N; ++i) {
+        cpu_stl_mmu(env, matrix_c + i * sizeof(int32_t), c_addr[i], oi, retaddr);
+    }
+    g_free(c_addr);
+    g_free(b_addr);
+    g_free(a_addr);
 }
 void helper_vadd(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
 {
-
+     const int length = 16;
+    int mmu_idx = riscv_env_mmu_index(env, false);
+    MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    target_ulong retaddr = GETPC();
+    target_ulong vec_a = env->gpr[rs1];
+    target_ulong vec_b = env->gpr[rs2];
+    target_ulong vec_c = env->gpr[rd];
+    int *a_addr = g_new(int,length);
+    int *b_addr = g_new(int,length);
+    int *c_addr = g_new(int,length);
+    for(int i = 0; i < length; ++i) {
+        a_addr[i] = cpu_ldl_mmu(env, vec_a + i * sizeof(int32_t), oi, retaddr);
+        b_addr[i] = cpu_ldl_mmu(env, vec_b + i * sizeof(int32_t), oi, retaddr);
+        c_addr[i] = a_addr[i] + b_addr[i];
+    }
+    for(int i = 0; i < length; ++i) {
+        cpu_stl_mmu(env, vec_c + i * sizeof(int), c_addr[i], oi, retaddr);
+    }
+    g_free(c_addr);
+    g_free(b_addr);
+    g_free(a_addr);
 }
+
 void helper_crush(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
 {
     int mmu_idx = riscv_env_mmu_index(env, false);
     MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
     target_ulong retaddr = GETPC();
     target_ulong src_addr = env->gpr[rs1];
-    int array_size = cpu_ldl_mmu(env, env->gpr[rs2], oi, retaddr);
+    int array_size = env->gpr[rs2];
     target_ulong dst_addr = env->gpr[rd];
-
+    int dst_array_size = 0;
+    //数据保存
     uint8_t *array = g_new(uint8_t, array_size);
-    uint8_t *dst_array = g_new(uint8_t, array_size / 2);
     for(int i = 0; i < array_size; ++i) {
         array[i] = cpu_ldl_mmu(env, src_addr + i * sizeof(uint8_t), oi, retaddr);
     }
-    for(int i = 0; i < array_size / 2; ++i) {
-        dst_array[i] = ((array[i] >> 4) << 4) | (array[i + 1] >> 4);
+    //针对奇数和偶数进行区分
+    if(array_size % 2 != 0) {
+        dst_array_size = array_size / 2 + 1;
+    } else {
+        dst_array_size = array_size / 2;
+    }
+    uint8_t *dst_array = g_new(uint8_t, dst_array_size);
+    for(int i = 0; i <= dst_array_size - 1; i++) {
+        dst_array[i] = (array[2 * i] & 0xF) | ((array[2 * i + 1] & 0xF) << 4);
+    }
+    if(array_size % 2 != 0) {
+        dst_array[dst_array_size - 1] =  (array[array_size - 1] & 0xF);
+    }
+    for(int i = 0; i < dst_array_size; ++i) {
         cpu_stl_mmu(env, dst_addr + i * sizeof(uint8_t), dst_array[i], oi, retaddr);
     }
+    g_free(dst_array);
+    g_free(array);
 }
 
 void helper_expand(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
 {
+    int mmu_idx = riscv_env_mmu_index(env, false);
+    MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    target_ulong retaddr = GETPC();
+    target_ulong src_addr = env->gpr[rs1];
+    int array_size = env->gpr[rs2];
+    target_ulong dst_addr = env->gpr[rd];
+    int dst_array_size = 0;
+    //数据保存
+    uint8_t *array = g_new(uint8_t, array_size);
+    for(int i = 0; i < array_size; ++i) {
+        array[i] = cpu_ldl_mmu(env, src_addr + i * sizeof(uint8_t), oi, retaddr);
+    }
+    dst_array_size = array_size * 2;
+    uint8_t *dst_array = g_new(uint8_t, dst_array_size);
 
+    for(int i = 0; i <= array_size - 1; ++i) {
+        dst_array[2 * i] = (array[i] & 0xF);
+        dst_array[2 * i + 1] = (array[i] & 0xF0) >> 4;
+    }
+
+    for(int i = 0; i < dst_array_size; ++i) {
+        cpu_stl_mmu(env, dst_addr + i * sizeof(uint8_t), dst_array[i], oi, retaddr);
+    }
+    g_free(dst_array);
+    g_free(array);
 }
 void helper_vdot(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
 {
-
+    const int vector_length = 16;
+    int mmu_idx = riscv_env_mmu_index(env, false);
+    MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    target_ulong retaddr = GETPC();
+    target_ulong vec_a = env->gpr[rs1];
+    target_ulong vec_b = env->gpr[rs2];
+    uint32_t *vec_a_arr = g_new(uint32_t, vector_length);
+    uint32_t *vec_b_arr = g_new(uint32_t, vector_length);
+    uint64_t acc = 0;
+    for(int i = 0; i < vector_length; i++) {
+        vec_a_arr[i] = cpu_ldl_mmu(env, vec_a + i * sizeof(uint32_t), oi, retaddr);
+        vec_b_arr[i] = cpu_ldl_mmu(env, vec_b + i * sizeof(uint32_t), oi, retaddr);
+    }
+    for(int i = 0; i < vector_length; i++) {
+        acc += vec_a_arr[i] * vec_b_arr[i];
+    }
+    env->gpr[rd] = acc;
 }
 void helper_vrelu(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
 {
-
+    int mmu_idx = riscv_env_mmu_index(env, false);
+    MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    target_ulong retaddr = GETPC();
+    target_ulong src_addr = env->gpr[rs1];
+    int N = env->gpr[rs2];
+    target_ulong dst_addr = env->gpr[rd];
+    int *src_array = g_new(int, N);
+    int *dst_array = g_new(int, N);
+    for(int i = 0; i < N; i++) {
+        src_array[i] = cpu_ldl_mmu(env, src_addr + i * sizeof(int), oi, retaddr);
+        if(src_array[i] < 0) {
+            dst_array[i] = 0;
+        } else {
+            dst_array[i] = src_array[i];
+        }
+    }
+    for(int i = 0; i < N; i++) {
+        cpu_stl_mmu(env, dst_addr + i * sizeof(int), dst_array[i], oi, retaddr);
+    }
+    g_free(dst_array);
+    g_free(src_array);
 }
 void helper_vscale(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
 {
+    const int N = 16;
+    int mmu_idx = riscv_env_mmu_index(env, false);
+    MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    target_ulong retaddr = GETPC();
+    target_ulong src_addr = env->gpr[rs1];
+    int scale = env->gpr[rs2];
+    target_ulong dst_addr = env->gpr[rd];
+    int *src_array = g_new(int, N);
+    int *dst_array = g_new(int, N);
+    for(int i = 0; i < N; i++) {
+        src_array[i] = cpu_ldl_mmu(env, src_addr + i * sizeof(int), oi, retaddr);
+        uint64_t val = src_array[i] * scale;
+        dst_array[i] = (int)val;
+    }
+    for(int i = 0; i < N; i++) {
+        cpu_stl_mmu(env, dst_addr + i * sizeof(int), dst_array[i], oi, retaddr);
+    }
+    g_free(dst_array);
+    g_free(src_array);
 
 }
 
 void helper_vmax(CPURISCVState *env, target_ulong rs1, target_ulong rs2, target_ulong rd)
 {
-
+    int mmu_idx = riscv_env_mmu_index(env, false);
+    MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    target_ulong retaddr = GETPC();
+    target_ulong src_addr = env->gpr[rs1];
+    int N = env->gpr[rs2];
+    int *src_array = g_new(int, N);
+    int MAX = INT32_MIN;
+    for(int i = 0; i < N; i++) {
+        src_array[i] = cpu_ldl_mmu(env, src_addr + i * sizeof(int), oi, retaddr);
+        if(src_array[i] > MAX) {
+            MAX = src_array[i];
+        }
+    }
+    env->gpr[rd] = MAX;
 }
 
 /* Exceptions processing helpers */
