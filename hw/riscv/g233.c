@@ -59,6 +59,7 @@
 #include "qapi/qapi-visit-common.h"
 #include "hw/virtio/virtio-iommu.h"
 #include "hw/uefi/var-service-api.h"
+#include "hw/gpio/g233_gpio.h"
 
 /* KVM AIA only supports APLIC MSI. APLIC Wired is always emulated by QEMU. */
 static bool g233_use_kvm_aia_aplic_imsic(RISCVG233AIAType aia_type)
@@ -94,6 +95,7 @@ static const MemMapEntry virt_memmap[] = {
     [VIRT_APLIC_M] =      {  0xc000000, APLIC_SIZE(VIRT_CPUS_MAX) },
     [VIRT_APLIC_S] =      {  0xd000000, APLIC_SIZE(VIRT_CPUS_MAX) },
     [VIRT_UART0] =        { 0x10000000,         0x100 },
+    [VIRT_G233_GPIO] =    { 0x10012000,         0xFF  },
     [VIRT_VIRTIO] =       { 0x10001000,        0x1000 },
     [VIRT_FW_CFG] =       { 0x10100000,          0x18 },
     [VIRT_FLASH] =        { 0x20000000,     0x4000000 },
@@ -1733,6 +1735,14 @@ static void virt_machine_init(MachineState *machine)
         create_fdt(s);
     }
 
+    sysbus_realize(SYS_BUS_DEVICE(&s->gpio), &error_fatal);
+    //映射 MMIO
+    sysbus_mmio_map(SYS_BUS_DEVICE(&s->gpio), 0, s->memmap[VIRT_G233_GPIO].base);
+
+    sysbus_connect_irq(SYS_BUS_DEVICE(&s->gpio), 0, 
+                   qdev_get_gpio_in(mmio_irqchip, G233_GPIO_IRQ));
+    
+
     if (g233_is_iommu_sys_enabled(s)) {
         DeviceState *iommu_sys = qdev_new(TYPE_RISCV_IOMMU_SYS);
 
@@ -1763,6 +1773,9 @@ static void virt_machine_instance_init(Object *obj)
     s->oem_table_id = g_strndup(ACPI_BUILD_APPNAME8, 8);
     s->acpi = ON_OFF_AUTO_AUTO;
     s->iommu_sys = ON_OFF_AUTO_AUTO;
+
+    //不依赖外部属性，所以我直接放在instance_init吧
+    object_initialize_child(obj, "gpio", &s->gpio, TYPE_G233_GPIO);
 }
 
 static char *virt_get_aia_guests(Object *obj, Error **errp)
