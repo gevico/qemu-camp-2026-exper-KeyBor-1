@@ -95,8 +95,10 @@ static const MemMapEntry virt_memmap[] = {
     [VIRT_APLIC_M] =      {  0xc000000, APLIC_SIZE(VIRT_CPUS_MAX) },
     [VIRT_APLIC_S] =      {  0xd000000, APLIC_SIZE(VIRT_CPUS_MAX) },
     [VIRT_UART0] =        { 0x10000000,         0x100 },
+    [VIRT_G233_WDT] =     { 0x10010000,         0xFFF },
     [VIRT_G233_GPIO] =    { 0x10012000,         0xFF  },
     [VIRT_G233_PWM] =     { 0x10015000,         0xFFF  },
+    [VIRT_G233_SPI] =     { 0x10018000,         0xFFF  },
     [VIRT_VIRTIO] =       { 0x10001000,        0x1000 },
     [VIRT_FW_CFG] =       { 0x10100000,          0x18 },
     [VIRT_FLASH] =        { 0x20000000,     0x4000000 },
@@ -1736,6 +1738,7 @@ static void virt_machine_init(MachineState *machine)
         create_fdt(s);
     }
 
+    // gpio
     sysbus_realize(SYS_BUS_DEVICE(&s->gpio), &error_fatal);
     //映射 MMIO
     sysbus_mmio_map(SYS_BUS_DEVICE(&s->gpio), 0, s->memmap[VIRT_G233_GPIO].base);
@@ -1743,6 +1746,13 @@ static void virt_machine_init(MachineState *machine)
     sysbus_connect_irq(SYS_BUS_DEVICE(&s->gpio), 0, 
                    qdev_get_gpio_in(mmio_irqchip, G233_GPIO_IRQ));
     
+    // pwm
+    sysbus_realize(SYS_BUS_DEVICE(&s->pwm), &error_fatal);
+    //映射 MMIO
+    sysbus_mmio_map(SYS_BUS_DEVICE(&s->pwm), 0, s->memmap[VIRT_G233_PWM].base);
+
+    sysbus_connect_irq(SYS_BUS_DEVICE(&s->pwm), 0, 
+                   qdev_get_gpio_in(mmio_irqchip, G233_PWM_IRQ));
 
     if (g233_is_iommu_sys_enabled(s)) {
         DeviceState *iommu_sys = qdev_new(TYPE_RISCV_IOMMU_SYS);
@@ -1775,8 +1785,9 @@ static void virt_machine_instance_init(Object *obj)
     s->acpi = ON_OFF_AUTO_AUTO;
     s->iommu_sys = ON_OFF_AUTO_AUTO;
 
-    //不依赖外部属性，所以我直接放在instance_init吧
+    // 不依赖外部属性，所以放在 instance_init。
     object_initialize_child(obj, "gpio", &s->gpio, TYPE_G233_GPIO);
+    object_initialize_child(obj, "pwm", &s->pwm, TYPE_G233_PWM);
 }
 
 static char *virt_get_aia_guests(Object *obj, Error **errp)
