@@ -169,3 +169,4 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
 system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 
 system_ss.add(when: 'CONFIG_G233_PWM', if_true: files('g233_pwm.c'))
+system_ss.add(when: 'CONFIG_G233_WDT', if_true: files('g233_wdt.c'))

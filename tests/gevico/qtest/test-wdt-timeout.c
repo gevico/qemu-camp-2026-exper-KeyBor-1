@@ -103,7 +103,6 @@ static void test_wdt_timeout_flag(void)
 
     /* Advance enough for timeout */
     qtest_clock_step(qts, 500000000);  /* 500ms */
-
     g_assert_cmpuint(qtest_readl(qts, WDT_SR) & WDT_SR_TIMEOUT, ==,
                      WDT_SR_TIMEOUT);
 

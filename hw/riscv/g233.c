@@ -60,6 +60,7 @@
 #include "hw/virtio/virtio-iommu.h"
 #include "hw/uefi/var-service-api.h"
 #include "hw/gpio/g233_gpio.h"
+#include "hw/misc/g233_wdt.h"
 
 /* KVM AIA only supports APLIC MSI. APLIC Wired is always emulated by QEMU. */
 static bool g233_use_kvm_aia_aplic_imsic(RISCVG233AIAType aia_type)
@@ -1738,6 +1739,12 @@ static void virt_machine_init(MachineState *machine)
         create_fdt(s);
     }
 
+    /* wdt */
+    sysbus_realize(SYS_BUS_DEVICE(&s->wdt), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(&s->wdt), 0, s->memmap[VIRT_G233_WDT].base);
+    sysbus_connect_irq(SYS_BUS_DEVICE(&s->wdt), 0,
+                   qdev_get_gpio_in(mmio_irqchip, G233_WDT_IRQ));
+
     // gpio
     sysbus_realize(SYS_BUS_DEVICE(&s->gpio), &error_fatal);
     //映射 MMIO
@@ -1786,6 +1793,7 @@ static void virt_machine_instance_init(Object *obj)
     s->iommu_sys = ON_OFF_AUTO_AUTO;
 
     // 不依赖外部属性，所以放在 instance_init。
+    object_initialize_child(obj, "wdt", &s->wdt, TYPE_G233_WDT);
     object_initialize_child(obj, "gpio", &s->gpio, TYPE_G233_GPIO);
     object_initialize_child(obj, "pwm", &s->pwm, TYPE_G233_PWM);
 }

@@ -265,4 +265,7 @@ config XLNX_VERSAL_TRNG
 config G233_PWM
     bool
 
+config G233_WDT
+    bool
+
 source macio/Kconfig

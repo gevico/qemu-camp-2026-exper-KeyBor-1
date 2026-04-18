@@ -28,6 +28,7 @@
 #include "hw/block/flash.h"
 #include "hw/intc/riscv_imsic.h"
 #include "hw/misc/g233_pwm.h"
+#include "hw/misc/g233_wdt.h"
 
 #define VIRT_CPUS_MAX_BITS             9
 #define VIRT_CPUS_MAX                  (1 << VIRT_CPUS_MAX_BITS)
@@ -58,6 +59,7 @@ struct RISCVG233State {
     FWCfgState *fw_cfg;
     G233GPIOState gpio;
     G233PwmState pwm;
+    G233WdtState wdt;
 
     int fdt_size;
     bool have_aclint;
@@ -101,6 +103,7 @@ enum {
 };
 
 enum {
+    G233_WDT_IRQ = 4,
     G233_GPIO_IRQ = 2,
     G233_PWM_IRQ = 3,
     UART0_IRQ = 10,
