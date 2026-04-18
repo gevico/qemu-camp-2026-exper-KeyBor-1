@@ -1761,6 +1761,12 @@ static void virt_machine_init(MachineState *machine)
     sysbus_connect_irq(SYS_BUS_DEVICE(&s->pwm), 0, 
                    qdev_get_gpio_in(mmio_irqchip, G233_PWM_IRQ));
 
+    /* spi */
+    sysbus_realize(SYS_BUS_DEVICE(&s->spi), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(&s->spi), 0, s->memmap[VIRT_G233_SPI].base);
+    sysbus_connect_irq(SYS_BUS_DEVICE(&s->spi), 0,
+                   qdev_get_gpio_in(mmio_irqchip, G233_SPI_IRQ));
+
     if (g233_is_iommu_sys_enabled(s)) {
         DeviceState *iommu_sys = qdev_new(TYPE_RISCV_IOMMU_SYS);
 
@@ -1796,6 +1802,7 @@ static void virt_machine_instance_init(Object *obj)
     object_initialize_child(obj, "wdt", &s->wdt, TYPE_G233_WDT);
     object_initialize_child(obj, "gpio", &s->gpio, TYPE_G233_GPIO);
     object_initialize_child(obj, "pwm", &s->pwm, TYPE_G233_PWM);
+    object_initialize_child(obj, "spi", &s->spi, TYPE_G233_SPI);
 }
 
 static char *virt_get_aia_guests(Object *obj, Error **errp)

@@ -268,4 +268,7 @@ config G233_PWM
 config G233_WDT
     bool
 
+config G233_SPI
+    bool
+
 source macio/Kconfig
