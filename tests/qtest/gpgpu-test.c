@@ -579,7 +579,7 @@ static void gpgpu_test_kernel_exec(void *obj, void *data, QGuestAllocator *alloc
 
     /* 7. 验证输出结果: C[i] 应该等于 i */
     for (uint32_t i = 0; i < num_threads; i++) {
-        val = qpci_io_readl(pdev, bar2, 0x1000 + i * 4); 
+        val = qpci_io_readl(pdev, bar2, 0x1000 + i * 4);
         g_assert_cmpuint(val, ==, i);
     }
 
