@@ -135,10 +135,14 @@ test-gpgpu: build
 	@passed=0; \
 	export QTEST_QEMU_BINARY=$(BUILD_DIR)/qemu-system-riscv64; \
 	for t in $(GPGPU_SUBTESTS); do \
+		echo -n "Running test $$t... "; \
 	    if $(BUILD_DIR)/tests/qtest/qos-test \
 	        -p /riscv64/virt/generic-pcihost/pci-bus-generic/pci-bus/gpgpu/gpgpu-tests/$$t \
 	        --tap -k 2>/dev/null | grep -q "^ok "; then \
 	        passed=$$((passed + 1)); \
+			echo "[  OK  ]"; \
+		else \
+			echo "[  FAIL  ]"; \
 	    fi; \
 	done; \
 	score=$$((passed * 100 / $(GPGPU_TOTAL))); \

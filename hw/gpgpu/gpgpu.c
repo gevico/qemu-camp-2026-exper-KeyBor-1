@@ -25,20 +25,59 @@
 /* TODO: Implement MMIO control register read */
 static uint64_t gpgpu_ctrl_read(void *opaque, hwaddr addr, unsigned size)
 {
-    (void)opaque;
-    (void)addr;
-    (void)size;
-    return 0;
+    GPGPUState *s = GPGPU(opaque);
+    // 2. 将 State 转换为通用 PCI 设备指针
+    // PCIDevice *pdev = PCI_DEVICE(s);
+    // // 3. 获取对应的 Class 指针
+    // PCIDeviceClass *pc = PCI_DEVICE_GET_CLASS(pdev);
+    uint64_t value = 0;
+    switch(addr) {
+        case GPGPU_REG_DEV_ID:
+            value = 0x47505055;
+            break;
+        case GPGPU_REG_DEV_VERSION:
+            value = 0x00010000;
+            break;
+        case GPGPU_REG_VRAM_SIZE_LO:
+            value = s->vram_size & 0xFFFFFFFF;
+            break;
+        case GPGPU_REG_VRAM_SIZE_HI:
+            value = (s->vram_size >> 32) & 0xFFFFFFFF;
+            break;
+        case GPGPU_REG_DEV_CAPS:
+            value = (s->num_cus & 0xFF) | ((s->warps_per_cu & 0xFF) << 8) | ((s->warp_size & 0xFF) << 16) | (0x0 << 24);
+            break;
+        case GPGPU_REG_GLOBAL_CTRL:
+            value = s->global_ctrl;
+            break;
+        case GPGPU_REG_GLOBAL_STATUS:
+            value = s->global_status;
+            break;
+        case GPGPU_REG_ERROR_STATUS:
+            value = s->error_status;
+            break;
+        default:
+            break;
+    }
+    return value;
 }
 
 /* TODO: Implement MMIO control register write */
 static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
                              unsigned size)
 {
-    (void)opaque;
-    (void)addr;
-    (void)val;
-    (void)size;
+    GPGPUState *s = GPGPU(opaque);
+    switch(addr) {
+        case GPGPU_REG_GLOBAL_CTRL:
+            s->global_ctrl = val;
+            //添加软复位行为
+            break;
+        case GPGPU_REG_ERROR_STATUS:
+            s->error_status = val;
+            break;
+        default:
+            break;
+    }
 }
 
 static const MemoryRegionOps gpgpu_ctrl_ops = {
