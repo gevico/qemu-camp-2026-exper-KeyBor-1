@@ -146,6 +146,6 @@ int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles);
  * 根据 s->kernel 中配置的 grid/block 维度执行内核。
  * 返回: 0 成功，-1 错误
  */
-int gpgpu_core_exec_kernel(GPGPUState *s);
+int gpgpu_core_exec_kernel(GPGPULane *lane, GPGPUState *s);
 
 #endif /* HW_GPGPU_CORE_H */

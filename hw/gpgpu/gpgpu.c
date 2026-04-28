@@ -116,6 +116,34 @@ static uint64_t gpgpu_ctrl_read(void *opaque, hwaddr addr, unsigned size)
         case GPGPU_REG_DMA_STATUS:
             value = s->dma.status;
             break;
+        /* 线程上下文寄存器组 (0x1000 - 0x1FFF): GPU 线程读取自身 ID */
+        case GPGPU_REG_THREAD_ID_X:
+            value = s->simt.thread_id[0];
+            break;
+        case GPGPU_REG_THREAD_ID_Y:
+            value = s->simt.thread_id[1];
+            break;
+        case GPGPU_REG_THREAD_ID_Z:
+            value = s->simt.thread_id[2];
+            break;
+        case GPGPU_REG_BLOCK_ID_X:
+            value = s->simt.block_id[0];
+            break;
+        case GPGPU_REG_BLOCK_ID_Y:
+            value = s->simt.block_id[1];
+            break;
+        case GPGPU_REG_BLOCK_ID_Z:
+            value = s->simt.block_id[2];
+            break;
+        case GPGPU_REG_WARP_ID:
+            value = s->simt.warp_id;
+            break;
+        case GPGPU_REG_LANE_ID:
+            value = s->simt.lane_id;
+            break;
+        case GPGPU_REG_THREAD_MASK:
+            value = s->simt.thread_mask;
+            break;
         default:
             break;
     }
@@ -136,6 +164,44 @@ static void gpgpu_ctrl_update_status(GPGPUState *s)
     }
 }
 
+
+static void gpgpu_dispatch_kernel(GPGPUState *s)
+{
+    bool is_illegal_param = ((s->kernel.kernel_addr > GPGPU_DEFAULT_VRAM_SIZE) || (s->kernel.kernel_args > GPGPU_DEFAULT_VRAM_SIZE) || ((s->kernel.grid_dim[0] <= 0) || (s->kernel.grid_dim[1] <= 0) || (s->kernel.grid_dim[2] <= 0)) ||
+                             ((s->kernel.block_dim[0] <= 0) || (s->kernel.block_dim[1] <= 0) || (s->kernel.block_dim[2] <= 0)));
+    if(!(s->global_ctrl & GPGPU_CTRL_ENABLE) || (s->global_status & GPGPU_STATUS_BUSY) || is_illegal_param) {
+        s->global_status |= GPGPU_STATUS_ERROR;
+        return;
+    }
+    s->global_status |= GPGPU_STATUS_BUSY;
+
+    // uint32_t grid_size = s->kernel.grid_dim[0] * s->kernel.grid_dim[1] * s->kernel.grid_dim[2];
+    // 一个block中有多少个线程
+    uint32_t block_size = s->kernel.block_dim[0] * s->kernel.block_dim[1] * s->kernel.block_dim[2];
+    for(int i = 0; i < s->kernel.grid_dim[0]; ++i) {
+        for(int j = 0; j < s->kernel.grid_dim[1]; ++j) {
+            for(int k = 0; k < s->kernel.grid_dim[2]; ++k){
+                //根据warpsize切分warp个数
+                uint32_t warp_num = (block_size + (s->warp_size - 1)) / s->warp_size;
+                for(int m = 0; m < warp_num; ++m) {
+                    GPGPUWarp warp = {0};
+                    const uint32_t block_id[3] = {i, j, k};
+                    uint32_t block_id_linear = k * (s->kernel.grid_dim[0] * s->kernel.grid_dim[1]) + i * s->kernel.grid_dim[0] + j;
+                    uint32_t thread_num = (s->warp_size > block_size) ? block_size : s->warp_size;
+                    for(int n = 0; n < thread_num; ++n)
+                        warp.active_mask |= (1 << n); 
+                    gpgpu_core_init_warp(&warp, s->kernel.kernel_addr,
+                                m * s->warp_size, block_id,
+                                thread_num,
+                                m, block_id_linear);
+                    gpgpu_core_exec_warp(s, &warp, 10);
+                }
+            }
+        }
+    }
+    s->global_status &= ~GPGPU_STATUS_BUSY;
+    s->global_status |= GPGPU_STATUS_READY;
+}
 /* TODO: Implement MMIO control register write */
 static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
                              unsigned size)
@@ -193,7 +259,7 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
             s->kernel.shared_mem_size = (uint32_t)val;
             break;
         case GPGPU_REG_DISPATCH:
-            /* Dispatch behavior is intentionally left unimplemented for now. */
+            gpgpu_dispatch_kernel(s);
             break;
         case GPGPU_REG_DMA_SRC_LO:
             s->dma.src_addr =
@@ -223,6 +289,37 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
             break;
         case GPGPU_REG_DMA_STATUS:
             /* DMA_STATUS is read-only. Ignore writes. */
+            break;
+        /* 线程上下文寄存器组 (0x1000 - 0x1FFF): 只读，GPU 核心运行时由硬件设置 */
+        case GPGPU_REG_THREAD_ID_X:
+            s->simt.thread_id[0] = (uint32_t)val;
+            break;
+        case GPGPU_REG_THREAD_ID_Y:
+            s->simt.thread_id[1] = (uint32_t)val;
+            break;
+        case GPGPU_REG_THREAD_ID_Z:
+            s->simt.thread_id[2] = (uint32_t)val;
+            break;
+        case GPGPU_REG_BLOCK_ID_X:
+            s->simt.block_id[0] = (uint32_t)val;
+            break;
+        case GPGPU_REG_BLOCK_ID_Y:
+            s->simt.block_id[1] = (uint32_t)val;
+            break;
+        case GPGPU_REG_BLOCK_ID_Z:
+            s->simt.block_id[2] = (uint32_t)val;
+            break;
+        case GPGPU_REG_WARP_ID:
+            s->simt.warp_id = (uint32_t)val;
+            break;
+        case GPGPU_REG_LANE_ID:
+            s->simt.lane_id = (uint32_t)val;
+            break;
+        case GPGPU_REG_THREAD_MASK:
+            s->simt.thread_mask = (uint32_t)val;
+            break;
+        case GPGPU_REG_BARRIER:
+            s->simt.barrier_active = (uint32_t)val;
             break;
         default:
             break;
