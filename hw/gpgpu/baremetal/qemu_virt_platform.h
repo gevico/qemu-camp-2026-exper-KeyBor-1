@@ -1,0 +1,16 @@
+#ifndef __QEMU_VIRT_PLATFORM_H__
+#define __QEMU_VIRT_PLATFORM_H__
+
+/*
+ * QEMU RISC-V virt PCIe apertures.
+ *
+ * Keep these in sync with hw/riscv/virt.c:
+ *   VIRT_PCIE_ECAM = { 0x30000000, 0x10000000 }
+ *   VIRT_PCIE_MMIO = { 0x40000000, 0x40000000 }
+ */
+#define GPGPU_PLATFORM_ECAM_BASE      0x30000000UL
+#define GPGPU_PLATFORM_ECAM_SIZE      0x10000000UL
+#define GPGPU_PLATFORM_MMIO_BASE      0x40000000UL
+#define GPGPU_PLATFORM_MMIO_SIZE      0x40000000UL
+
+#endif

@@ -19,6 +19,7 @@
 
 /* TODO: Implement warp initialization */
 void gpgpu_core_init_warp(GPGPUWarp *warp, uint32_t pc,
+                          uint32_t kernel_args,
                           uint32_t thread_id_base, const uint32_t block_id[3],
                           uint32_t num_threads,
                           uint32_t warp_id, uint32_t block_id_linear)
@@ -28,14 +29,15 @@ void gpgpu_core_init_warp(GPGPUWarp *warp, uint32_t pc,
     warp->warp_id = warp_id;
     for (int i = 0; i < num_threads; ++i) {
         warp->lanes[i] = (GPGPULane){
-            .gpr = {0},
-            .fpr = {0},
+            .gpr = {{0}},
+            .fpr = {{0}},
             .pc = pc,
             .mhartid = MHART_ID(block_id_linear, warp_id, i),
             .fcsr = 0,
             .fp_status = {0},
             .active = 1
         };
+        warp->lanes[i].gpr[10].u32 = kernel_args;
     }
 }
 
@@ -45,7 +47,29 @@ int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles)
     while (true) {
         if (warp->active_mask == 0) break;
         for (int i = 0; i < 32; ++i) {
+            uint32_t thread_id_linear;
+            uint32_t block_dim_x;
+            uint32_t block_dim_y;
+            uint32_t block_xy;
+
             if(!(warp->active_mask & (1u << i))) continue;
+            thread_id_linear = warp->thread_id_base + i;
+            block_dim_x = s->kernel.block_dim[0];
+            block_dim_y = s->kernel.block_dim[1];
+            if (block_dim_x == 0 || block_dim_y == 0) {
+                s->error_status |= GPGPU_ERR_INVALID_CMD;
+                s->global_status |= GPGPU_STATUS_ERROR;
+                return -1;
+            }
+            block_xy = block_dim_x * block_dim_y;
+            if (block_xy == 0) {
+                s->error_status |= GPGPU_ERR_INVALID_CMD;
+                s->global_status |= GPGPU_STATUS_ERROR;
+                return -1;
+            }
+            s->simt.thread_id[0] = thread_id_linear % block_dim_x;
+            s->simt.thread_id[1] = (thread_id_linear / block_dim_x) % block_dim_y;
+            s->simt.thread_id[2] = thread_id_linear / block_xy;
             s->simt.warp_id = warp->warp_id;
             memcpy(s->simt.block_id, warp->block_id, sizeof(s->simt.block_id));
             s->simt.lane_id = i;
@@ -331,11 +355,61 @@ static void exec_lui(const GPGPURiscVDecode *dec, GPGPULane *lane) {
     lane->gpr[dec->rd].u32 = dec->imm;
 }
 
+static bool gpgpu_core_ctrl_load_u32(GPGPUState *s, uint32_t addr,
+                                     uint32_t *value)
+{
+    switch (addr) {
+    case GPGPU_CORE_CTRL_THREAD_ID_X:
+        *value = s->simt.thread_id[0];
+        return true;
+    case GPGPU_CORE_CTRL_THREAD_ID_Y:
+        *value = s->simt.thread_id[1];
+        return true;
+    case GPGPU_CORE_CTRL_THREAD_ID_Z:
+        *value = s->simt.thread_id[2];
+        return true;
+    case GPGPU_CORE_CTRL_BLOCK_ID_X:
+        *value = s->simt.block_id[0];
+        return true;
+    case GPGPU_CORE_CTRL_BLOCK_ID_Y:
+        *value = s->simt.block_id[1];
+        return true;
+    case GPGPU_CORE_CTRL_BLOCK_ID_Z:
+        *value = s->simt.block_id[2];
+        return true;
+    case GPGPU_CORE_CTRL_BLOCK_DIM_X:
+        *value = s->kernel.block_dim[0];
+        return true;
+    case GPGPU_CORE_CTRL_BLOCK_DIM_Y:
+        *value = s->kernel.block_dim[1];
+        return true;
+    case GPGPU_CORE_CTRL_BLOCK_DIM_Z:
+        *value = s->kernel.block_dim[2];
+        return true;
+    case GPGPU_CORE_CTRL_GRID_DIM_X:
+        *value = s->kernel.grid_dim[0];
+        return true;
+    case GPGPU_CORE_CTRL_GRID_DIM_Y:
+        *value = s->kernel.grid_dim[1];
+        return true;
+    case GPGPU_CORE_CTRL_GRID_DIM_Z:
+        *value = s->kernel.grid_dim[2];
+        return true;
+    default:
+        return false;
+    }
+}
+
 static void exec_load(const GPGPURiscVDecode *dec, GPGPULane *lane, GPGPUState *s) {
     uint32_t addr = lane->gpr[dec->rs1].u32 + dec->imm;
     uint32_t value;
 
-    if (dec->funct3 == 0x2 && gpgpu_core_vram_load_u32(s, addr, &value)) {  // LW
+    if (dec->funct3 != 0x2) {
+        return;
+    }
+
+    if (gpgpu_core_ctrl_load_u32(s, addr, &value) ||
+        gpgpu_core_vram_load_u32(s, addr, &value)) {  // LW
         lane->gpr[dec->rd].u32 = value;
     }
 }

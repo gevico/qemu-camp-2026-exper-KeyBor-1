@@ -178,21 +178,22 @@ static void gpgpu_dispatch_kernel(GPGPUState *s)
     // uint32_t grid_size = s->kernel.grid_dim[0] * s->kernel.grid_dim[1] * s->kernel.grid_dim[2];
     // 一个block中有多少个线程
     uint32_t block_size = s->kernel.block_dim[0] * s->kernel.block_dim[1] * s->kernel.block_dim[2];
+    //根据warpsize切分warp个数
+    uint32_t warp_num = (block_size + (s->warp_size - 1)) / s->warp_size;
     for(int i = 0; i < s->kernel.grid_dim[0]; ++i) {
         for(int j = 0; j < s->kernel.grid_dim[1]; ++j) {
             for(int k = 0; k < s->kernel.grid_dim[2]; ++k){
-                //根据warpsize切分warp个数
-                uint32_t warp_num = (block_size + (s->warp_size - 1)) / s->warp_size;
+                const uint32_t block_id[3] = {i, j, k};
+                uint32_t block_id_linear = k * (s->kernel.grid_dim[0] * s->kernel.grid_dim[1]) + j * s->kernel.grid_dim[0] + i;
                 for(int m = 0; m < warp_num; ++m) {
                     GPGPUWarp warp = {0};
-                    const uint32_t block_id[3] = {i, j, k};
-                    uint32_t block_id_linear = k * (s->kernel.grid_dim[0] * s->kernel.grid_dim[1]) + j * s->kernel.grid_dim[0] + i;
                     uint32_t thread_id_base = m * s->warp_size;
                     uint32_t remaining = block_size - thread_id_base;
                     uint32_t thread_num = MIN(s->warp_size, remaining);
                     for(int n = 0; n < thread_num; ++n)
                         warp.active_mask |= (1u << n);
                     gpgpu_core_init_warp(&warp, s->kernel.kernel_addr,
+                                s->kernel.kernel_args,
                                 thread_id_base, block_id,
                                 thread_num,
                                 m, block_id_linear);

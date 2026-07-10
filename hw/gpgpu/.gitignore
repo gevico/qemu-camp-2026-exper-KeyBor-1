@@ -1,0 +1,17 @@
+# Baremetal build outputs
+/baremetal/build/
+
+# Local traces and debug dumps
+*.log
+*.trace
+*.dump
+*.dmp
+
+# QEMU/runtime temporary files
+*.pid
+*.sock
+
+# Editor and OS noise
+.DS_Store
+*~
+*.swp
