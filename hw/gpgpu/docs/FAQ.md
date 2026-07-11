@@ -840,3 +840,83 @@ sp = stack_base + (global_thread_id + 1) * 4096
 warp/lane 调度顺序不会导致局部变量互相覆盖。代价是内存开销较大，并且
 runtime 的普通 VRAM 分配目前还不知道这段 launch-time stack 区，后续要
 演进成更正式的 VRAM memory layout 或 command metadata。
+
+## 24. RISC-V 编译器生成的 `sp` 为什么能和 lane 的栈连起来？
+
+RISC-V 汇编里的 `sp`、`a0`、`a5` 这些名字不是额外的硬件对象，而是通用
+寄存器编号的 ABI 别名：
+
+```text
+sp = x2
+a0 = x10
+a5 = x15
+```
+
+编译器看到 C 局部变量需要放到栈上时，可能生成：
+
+```asm
+addi sp, sp, -16
+sw a3, 0(sp)
+lw a5, 0(sp)
+```
+
+但机器码里不会保存字符串 `"sp"`，只会保存寄存器编号。比如：
+
+```asm
+sw a3, 0(sp)
+```
+
+解码后核心信息是：
+
+```text
+rs1 = 2     // base register = sp/x2
+rs2 = 13    // source register = a3/x13
+imm = 0
+```
+
+我们的解释器执行 store 时使用这些编号访问当前 lane 的寄存器数组：
+
+```c
+addr = lane->gpr[dec->rs1].u32 + dec->imm;
+gpgpu_core_vram_store_u32(s, addr, lane->gpr[dec->rs2].u32);
+```
+
+所以当 `dec->rs1 == 2` 时，本质就是：
+
+```c
+addr = lane->gpr[2].u32 + dec->imm;
+```
+
+而 `gpgpu_core_init_warp()` 已经在 lane 入口处初始化：
+
+```c
+lane->gpr[2].u32 = stack_top;    // sp/x2
+lane->gpr[10].u32 = kernel_args; // a0/x10
+```
+
+因此完整链路是：
+
+```text
+C 局部变量
+  -> 编译器生成 sw/lw ...(sp)
+  -> sp 是 RISC-V ABI 对 x2 的名字
+  -> 机器码里 rs1 = 2
+  -> 解释器访问 lane->gpr[2]
+  -> lane->gpr[2] 是 dispatch 时设置的 per-thread stack top
+  -> 最终读写 VRAM 中该 thread 的私有栈区域
+```
+
+所以你的理解是对的：**通用寄存器在机器码和解释器里都是通过寄存器编号访问的**。
+汇编里的名字主要服务于人类阅读和 ABI 约定；真正执行时使用的是寄存器编号。
+
+这里要避免把“编号”和“偏移”混在一起：
+
+```text
+x2 的 2        = 寄存器编号
+lane->gpr[2]   = 用寄存器编号作为数组下标访问模拟寄存器
+0(sp) 的 0     = 相对 sp/x2 的地址偏移
+```
+
+所以更准确的说法是：RISC-V 指令编码使用 `rs1/rs2/rd` 寄存器编号；
+我们的解释器再把这个编号作为 `gpr[]` 下标。`lw/sw` 里的 immediate
+才是内存地址偏移。
