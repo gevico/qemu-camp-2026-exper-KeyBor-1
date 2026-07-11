@@ -22,3 +22,10 @@ q_value = round(real_value * 256)
 
 We do not need PyTorch for export because the upstream `model.pt` is a zip
 archive with raw float32 tensor storages in a stable order for this model.
+
+`mnist_test0_q8.h` stores MNIST test-set image 0 and its label. Pixels are
+normalized with the same Q8.8 scale:
+
+```text
+q_pixel = round(pixel_u8 / 255 * 256)
+```

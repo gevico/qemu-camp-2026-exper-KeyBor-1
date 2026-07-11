@@ -1,6 +1,8 @@
 #include "qemu_virt_platform.h"
 #include "gpgpu_pci.h"
 #include "gpgpu_nn.h"
+#include "../../assets/lenet/mnist_test0_q8.h"
+#include "../../assets/lenet/sunnyhaze_lenet_q8_weights.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -28,6 +30,33 @@
 #define LAYOUT_C 2
 #define LAYOUT_H 2
 #define LAYOUT_W 2
+#define LENET_N 1
+#define LENET_IN_C 1
+#define LENET_IN_H 28
+#define LENET_IN_W 28
+#define LENET_CONV1_O 6
+#define LENET_CONV1_KH 5
+#define LENET_CONV1_KW 5
+#define LENET_CONV1_OUT_H 28
+#define LENET_CONV1_OUT_W 28
+#define LENET_CONV1_M (LENET_N * LENET_CONV1_OUT_H * LENET_CONV1_OUT_W)
+#define LENET_CONV1_K (LENET_IN_C * LENET_CONV1_KH * LENET_CONV1_KW)
+#define LENET_POOL1_H 14
+#define LENET_POOL1_W 14
+#define LENET_CONV2_O 16
+#define LENET_CONV2_KH 5
+#define LENET_CONV2_KW 5
+#define LENET_CONV2_OUT_H 10
+#define LENET_CONV2_OUT_W 10
+#define LENET_CONV2_M (LENET_N * LENET_CONV2_OUT_H * LENET_CONV2_OUT_W)
+#define LENET_CONV2_K (LENET_CONV1_O * LENET_CONV2_KH * LENET_CONV2_KW)
+#define LENET_POOL2_H 5
+#define LENET_POOL2_W 5
+#define LENET_FC1_IN (LENET_CONV2_O * LENET_POOL2_H * LENET_POOL2_W)
+#define LENET_FC1_OUT 120
+#define LENET_FC2_OUT 84
+#define LENET_FC3_OUT 10
+#define LENET_NODE_MAX 22
 #define CONV_N 1
 #define CONV_C 1
 #define CONV_H 4
@@ -149,6 +178,92 @@ static void trace_u32(const char *name, uint32_t value)
     uart_puts("=");
     uart_puthex32(value);
     uart_puts("\n");
+}
+
+static int upload_i32_array(GPGPURuntimeDevice *dev, uint32_t *addr,
+                            const int32_t *values, uint32_t count)
+{
+    int ret = gpgpu_malloc(dev, addr, count * sizeof(*values));
+
+    if (ret < 0) {
+        return ret;
+    }
+    return gpgpu_write(dev, *addr, values, count * sizeof(*values));
+}
+
+static int alloc_i32_array(GPGPURuntimeDevice *dev, uint32_t *addr,
+                           uint32_t count)
+{
+    return gpgpu_malloc(dev, addr, count * sizeof(int32_t));
+}
+
+static int upload_linear_weight_ko(GPGPURuntimeDevice *dev, uint32_t *addr,
+                                   const int32_t *weight_oi,
+                                   uint32_t out_features,
+                                   uint32_t in_features)
+{
+    int ret = gpgpu_malloc(dev, addr,
+                           out_features * in_features * sizeof(int32_t));
+
+    if (ret < 0) {
+        return ret;
+    }
+    for (uint32_t k = 0; k < in_features; ++k) {
+        for (uint32_t o = 0; o < out_features; ++o) {
+            int32_t value = weight_oi[o * in_features + k];
+            uint32_t offset = (k * out_features + o) * sizeof(value);
+
+            ret = gpgpu_write(dev, *addr + offset, &value, sizeof(value));
+            if (ret < 0) {
+                return ret;
+            }
+        }
+    }
+    return 0;
+}
+
+static int upload_args_checked(GPGPURuntimeDevice *dev, uint32_t *addr,
+                               const void *args, size_t size,
+                               const char *name)
+{
+    int ret = gpgpu_upload_args(dev, addr, args, size);
+
+    if (ret < 0) {
+        report_ret(name, ret);
+    }
+    return ret;
+}
+
+static void add_node(GPGPUNodeDesc *nodes, uint32_t *num_nodes,
+                     uint32_t kernel_addr, uint32_t args_addr,
+                     GPGPURuntimeDim3 grid, GPGPURuntimeDim3 block)
+{
+    nodes[*num_nodes] = (GPGPUNodeDesc) {
+        .kernel_addr = kernel_addr,
+        .args_addr = args_addr,
+        .grid = grid,
+        .block = block,
+    };
+    *num_nodes += 1;
+}
+
+static int run_nodes(GPGPURuntimeDevice *dev, GPGPUNodeDesc *nodes,
+                     uint32_t num_nodes, const char *name)
+{
+    for (uint32_t i = 0; i < num_nodes; ++i) {
+        int ret = gpgpu_launch(dev, nodes[i].kernel_addr, nodes[i].args_addr,
+                               nodes[i].grid, nodes[i].block);
+
+        if (ret < 0) {
+            uart_puts(name);
+            uart_puts(" node failed idx=");
+            uart_puthex32(i);
+            uart_puts("\n");
+            report_ret("gpgpu_launch(network_node)", ret);
+            return ret;
+        }
+    }
+    return 0;
 }
 
 int main(void)
@@ -329,6 +444,62 @@ int main(void)
     uint32_t pool_args_addr;
     GPGPUMaxPool2DArgs pool_args;
     int pool_ok = 1;
+    uint32_t lenet_input_addr;
+    uint32_t lenet_conv1_weight_addr;
+    uint32_t lenet_conv1_bias_addr;
+    uint32_t lenet_conv1_col_addr;
+    uint32_t lenet_conv1_ko_addr;
+    uint32_t lenet_conv1_partial_addr;
+    uint32_t lenet_conv1_mo_addr;
+    uint32_t lenet_conv1_nchw_addr;
+    uint32_t lenet_pool1_addr;
+    uint32_t lenet_conv2_weight_addr;
+    uint32_t lenet_conv2_bias_addr;
+    uint32_t lenet_conv2_col_addr;
+    uint32_t lenet_conv2_ko_addr;
+    uint32_t lenet_conv2_partial_addr;
+    uint32_t lenet_conv2_mo_addr;
+    uint32_t lenet_conv2_nchw_addr;
+    uint32_t lenet_pool2_addr;
+    uint32_t lenet_fc1_weight_ko_addr;
+    uint32_t lenet_fc1_bias_addr;
+    uint32_t lenet_fc1_partial_addr;
+    uint32_t lenet_fc1_out_addr;
+    uint32_t lenet_fc2_weight_ko_addr;
+    uint32_t lenet_fc2_bias_addr;
+    uint32_t lenet_fc2_partial_addr;
+    uint32_t lenet_fc2_out_addr;
+    uint32_t lenet_fc3_weight_ko_addr;
+    uint32_t lenet_fc3_bias_addr;
+    uint32_t lenet_fc3_partial_addr;
+    uint32_t lenet_logits_addr;
+    uint32_t lenet_args_addr[LENET_NODE_MAX];
+    GPGPUNodeDesc lenet_nodes[LENET_NODE_MAX];
+    uint32_t lenet_node_count = 0;
+    int32_t lenet_logits[LENET_FC3_OUT];
+    uint32_t lenet_pred = 0;
+    GPGPUIm2ColArgs lenet_im2col1_args;
+    GPGPUOihwToKoArgs lenet_oihw1_args;
+    GPGPUMatmulPartialArgs lenet_conv1_partial_args;
+    GPGPUMatmulReduceArgs lenet_conv1_reduce_args;
+    GPGPUMoToNchwArgs lenet_mo1_args;
+    GPGPUReluArgs lenet_relu1_args;
+    GPGPUMaxPool2DArgs lenet_pool1_args;
+    GPGPUIm2ColArgs lenet_im2col2_args;
+    GPGPUOihwToKoArgs lenet_oihw2_args;
+    GPGPUMatmulPartialArgs lenet_conv2_partial_args;
+    GPGPUMatmulReduceArgs lenet_conv2_reduce_args;
+    GPGPUMoToNchwArgs lenet_mo2_args;
+    GPGPUReluArgs lenet_relu2_args;
+    GPGPUMaxPool2DArgs lenet_pool2_args;
+    GPGPUMatmulPartialArgs lenet_fc1_partial_args;
+    GPGPUMatmulReduceArgs lenet_fc1_reduce_args;
+    GPGPUReluArgs lenet_relu3_args;
+    GPGPUMatmulPartialArgs lenet_fc2_partial_args;
+    GPGPUMatmulReduceArgs lenet_fc2_reduce_args;
+    GPGPUReluArgs lenet_relu4_args;
+    GPGPUMatmulPartialArgs lenet_fc3_partial_args;
+    GPGPUMatmulReduceArgs lenet_fc3_reduce_args;
     int ret;
 
     /*
@@ -1658,5 +1829,595 @@ int main(void)
     }
     uart_puts("gpgpu maxpool_i32 ");
     uart_puts(pool_ok ? "PASS\n" : "FAIL\n");
-    return pool_ok ? 0 : 1;
+    if (!pool_ok) {
+        return 1;
+    }
+
+    ret = upload_i32_array(&dev, &lenet_input_addr, mnist_test0_q8,
+                           LENET_N * LENET_IN_C * LENET_IN_H *
+                           LENET_IN_W);
+    if (ret < 0) {
+        report_ret("upload(lenet_input)", ret);
+        return ret;
+    }
+    ret = upload_i32_array(&dev, &lenet_conv1_weight_addr,
+                           sunnyhaze_lenet_conv1_weight_q8,
+                           LENET_CONV1_O * LENET_IN_C *
+                           LENET_CONV1_KH * LENET_CONV1_KW);
+    if (ret < 0) {
+        report_ret("upload(conv1_weight)", ret);
+        return ret;
+    }
+    ret = upload_i32_array(&dev, &lenet_conv1_bias_addr,
+                           sunnyhaze_lenet_conv1_bias_q8, LENET_CONV1_O);
+    if (ret < 0) {
+        report_ret("upload(conv1_bias)", ret);
+        return ret;
+    }
+    ret = upload_i32_array(&dev, &lenet_conv2_weight_addr,
+                           sunnyhaze_lenet_conv2_weight_q8,
+                           LENET_CONV2_O * LENET_CONV1_O *
+                           LENET_CONV2_KH * LENET_CONV2_KW);
+    if (ret < 0) {
+        report_ret("upload(conv2_weight)", ret);
+        return ret;
+    }
+    ret = upload_i32_array(&dev, &lenet_conv2_bias_addr,
+                           sunnyhaze_lenet_conv2_bias_q8, LENET_CONV2_O);
+    if (ret < 0) {
+        report_ret("upload(conv2_bias)", ret);
+        return ret;
+    }
+    ret = upload_linear_weight_ko(&dev, &lenet_fc1_weight_ko_addr,
+                                  sunnyhaze_lenet_fc1_weight_q8,
+                                  LENET_FC1_OUT, LENET_FC1_IN);
+    if (ret < 0) {
+        report_ret("upload(fc1_weight_ko)", ret);
+        return ret;
+    }
+    ret = upload_i32_array(&dev, &lenet_fc1_bias_addr,
+                           sunnyhaze_lenet_fc1_bias_q8, LENET_FC1_OUT);
+    if (ret < 0) {
+        report_ret("upload(fc1_bias)", ret);
+        return ret;
+    }
+    ret = upload_linear_weight_ko(&dev, &lenet_fc2_weight_ko_addr,
+                                  sunnyhaze_lenet_fc2_weight_q8,
+                                  LENET_FC2_OUT, LENET_FC1_OUT);
+    if (ret < 0) {
+        report_ret("upload(fc2_weight_ko)", ret);
+        return ret;
+    }
+    ret = upload_i32_array(&dev, &lenet_fc2_bias_addr,
+                           sunnyhaze_lenet_fc2_bias_q8, LENET_FC2_OUT);
+    if (ret < 0) {
+        report_ret("upload(fc2_bias)", ret);
+        return ret;
+    }
+    ret = upload_linear_weight_ko(&dev, &lenet_fc3_weight_ko_addr,
+                                  sunnyhaze_lenet_fc3_weight_q8,
+                                  LENET_FC3_OUT, LENET_FC2_OUT);
+    if (ret < 0) {
+        report_ret("upload(fc3_weight_ko)", ret);
+        return ret;
+    }
+    ret = upload_i32_array(&dev, &lenet_fc3_bias_addr,
+                           sunnyhaze_lenet_fc3_bias_q8, LENET_FC3_OUT);
+    if (ret < 0) {
+        report_ret("upload(fc3_bias)", ret);
+        return ret;
+    }
+
+    ret = alloc_i32_array(&dev, &lenet_conv1_col_addr,
+                          LENET_CONV1_M * LENET_CONV1_K);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_conv1_ko_addr,
+                          LENET_CONV1_K * LENET_CONV1_O);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_conv1_partial_addr,
+                          LENET_CONV1_M * LENET_CONV1_O * LENET_CONV1_K);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_conv1_mo_addr,
+                          LENET_CONV1_M * LENET_CONV1_O);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_conv1_nchw_addr,
+                          LENET_N * LENET_CONV1_O *
+                          LENET_CONV1_OUT_H * LENET_CONV1_OUT_W);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_pool1_addr,
+                          LENET_N * LENET_CONV1_O *
+                          LENET_POOL1_H * LENET_POOL1_W);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_conv2_col_addr,
+                          LENET_CONV2_M * LENET_CONV2_K);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_conv2_ko_addr,
+                          LENET_CONV2_K * LENET_CONV2_O);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_conv2_partial_addr,
+                          LENET_CONV2_M * LENET_CONV2_O * LENET_CONV2_K);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_conv2_mo_addr,
+                          LENET_CONV2_M * LENET_CONV2_O);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_conv2_nchw_addr,
+                          LENET_N * LENET_CONV2_O *
+                          LENET_CONV2_OUT_H * LENET_CONV2_OUT_W);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_pool2_addr, LENET_FC1_IN);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_fc1_partial_addr,
+                          LENET_FC1_OUT * LENET_FC1_IN);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_fc1_out_addr, LENET_FC1_OUT);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_fc2_partial_addr,
+                          LENET_FC2_OUT * LENET_FC1_OUT);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_fc2_out_addr, LENET_FC2_OUT);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_fc3_partial_addr,
+                          LENET_FC3_OUT * LENET_FC2_OUT);
+    if (ret < 0) return ret;
+    ret = alloc_i32_array(&dev, &lenet_logits_addr, LENET_FC3_OUT);
+    if (ret < 0) return ret;
+
+    lenet_im2col1_args = (GPGPUIm2ColArgs) {
+        .input = gpgpu_tensor_make_nchw_i32(lenet_input_addr, LENET_N,
+                                            LENET_IN_C, LENET_IN_H,
+                                            LENET_IN_W),
+        .output = gpgpu_tensor_make_mk_i32(lenet_conv1_col_addr,
+                                           LENET_CONV1_M, LENET_CONV1_K),
+        .kernel_h = LENET_CONV1_KH,
+        .kernel_w = LENET_CONV1_KW,
+        .pad_h = 2,
+        .pad_w = 2,
+        .stride_h = 1,
+        .stride_w = 1,
+        .out_h = LENET_CONV1_OUT_H,
+        .out_w = LENET_CONV1_OUT_W,
+    };
+    lenet_oihw1_args = (GPGPUOihwToKoArgs) {
+        .input = gpgpu_tensor_make_oihw_i32(lenet_conv1_weight_addr,
+                                            LENET_CONV1_O, LENET_IN_C,
+                                            LENET_CONV1_KH, LENET_CONV1_KW),
+        .output = gpgpu_tensor_make_ko_i32(lenet_conv1_ko_addr,
+                                           LENET_CONV1_K, LENET_CONV1_O),
+        .out_channels = LENET_CONV1_O,
+        .in_channels = LENET_IN_C,
+        .kernel_h = LENET_CONV1_KH,
+        .kernel_w = LENET_CONV1_KW,
+    };
+    lenet_conv1_partial_args = (GPGPUMatmulPartialArgs) {
+        .a = gpgpu_tensor_make_mk_i32(lenet_conv1_col_addr,
+                                      LENET_CONV1_M, LENET_CONV1_K),
+        .b = gpgpu_tensor_make_ko_i32(lenet_conv1_ko_addr,
+                                      LENET_CONV1_K, LENET_CONV1_O),
+        .partial = gpgpu_tensor_make_1d_i32(
+            lenet_conv1_partial_addr,
+            LENET_CONV1_M * LENET_CONV1_O * LENET_CONV1_K),
+        .m = LENET_CONV1_M,
+        .k = LENET_CONV1_K,
+        .o = LENET_CONV1_O,
+    };
+    lenet_conv1_reduce_args = (GPGPUMatmulReduceArgs) {
+        .partial = gpgpu_tensor_make_1d_i32(
+            lenet_conv1_partial_addr,
+            LENET_CONV1_M * LENET_CONV1_O * LENET_CONV1_K),
+        .c = gpgpu_tensor_make_mo_i32(lenet_conv1_mo_addr,
+                                      LENET_CONV1_M, LENET_CONV1_O),
+        .bias = gpgpu_tensor_make_1d_i32(lenet_conv1_bias_addr,
+                                         LENET_CONV1_O),
+        .m = LENET_CONV1_M,
+        .k = LENET_CONV1_K,
+        .o = LENET_CONV1_O,
+        .output_shift = SUNNYHAZE_LENET_Q8_SHIFT,
+        .has_bias = 1,
+    };
+    lenet_mo1_args = (GPGPUMoToNchwArgs) {
+        .input = gpgpu_tensor_make_mo_i32(lenet_conv1_mo_addr,
+                                          LENET_CONV1_M, LENET_CONV1_O),
+        .output = gpgpu_tensor_make_nchw_i32(
+            lenet_conv1_nchw_addr, LENET_N, LENET_CONV1_O,
+            LENET_CONV1_OUT_H, LENET_CONV1_OUT_W),
+        .n = LENET_N,
+        .c = LENET_CONV1_O,
+        .h = LENET_CONV1_OUT_H,
+        .w = LENET_CONV1_OUT_W,
+    };
+    lenet_relu1_args = (GPGPUReluArgs) {
+        .input = gpgpu_tensor_make_nchw_i32(
+            lenet_conv1_nchw_addr, LENET_N, LENET_CONV1_O,
+            LENET_CONV1_OUT_H, LENET_CONV1_OUT_W),
+        .output = gpgpu_tensor_make_nchw_i32(
+            lenet_conv1_nchw_addr, LENET_N, LENET_CONV1_O,
+            LENET_CONV1_OUT_H, LENET_CONV1_OUT_W),
+    };
+    lenet_pool1_args = (GPGPUMaxPool2DArgs) {
+        .input = gpgpu_tensor_make_nchw_i32(
+            lenet_conv1_nchw_addr, LENET_N, LENET_CONV1_O,
+            LENET_CONV1_OUT_H, LENET_CONV1_OUT_W),
+        .output = gpgpu_tensor_make_nchw_i32(
+            lenet_pool1_addr, LENET_N, LENET_CONV1_O,
+            LENET_POOL1_H, LENET_POOL1_W),
+        .kernel_h = 2,
+        .kernel_w = 2,
+        .stride_h = 2,
+        .stride_w = 2,
+    };
+
+    lenet_im2col2_args = (GPGPUIm2ColArgs) {
+        .input = gpgpu_tensor_make_nchw_i32(lenet_pool1_addr, LENET_N,
+                                            LENET_CONV1_O, LENET_POOL1_H,
+                                            LENET_POOL1_W),
+        .output = gpgpu_tensor_make_mk_i32(lenet_conv2_col_addr,
+                                           LENET_CONV2_M, LENET_CONV2_K),
+        .kernel_h = LENET_CONV2_KH,
+        .kernel_w = LENET_CONV2_KW,
+        .stride_h = 1,
+        .stride_w = 1,
+        .out_h = LENET_CONV2_OUT_H,
+        .out_w = LENET_CONV2_OUT_W,
+    };
+    lenet_oihw2_args = (GPGPUOihwToKoArgs) {
+        .input = gpgpu_tensor_make_oihw_i32(lenet_conv2_weight_addr,
+                                            LENET_CONV2_O, LENET_CONV1_O,
+                                            LENET_CONV2_KH, LENET_CONV2_KW),
+        .output = gpgpu_tensor_make_ko_i32(lenet_conv2_ko_addr,
+                                           LENET_CONV2_K, LENET_CONV2_O),
+        .out_channels = LENET_CONV2_O,
+        .in_channels = LENET_CONV1_O,
+        .kernel_h = LENET_CONV2_KH,
+        .kernel_w = LENET_CONV2_KW,
+    };
+    lenet_conv2_partial_args = (GPGPUMatmulPartialArgs) {
+        .a = gpgpu_tensor_make_mk_i32(lenet_conv2_col_addr,
+                                      LENET_CONV2_M, LENET_CONV2_K),
+        .b = gpgpu_tensor_make_ko_i32(lenet_conv2_ko_addr,
+                                      LENET_CONV2_K, LENET_CONV2_O),
+        .partial = gpgpu_tensor_make_1d_i32(
+            lenet_conv2_partial_addr,
+            LENET_CONV2_M * LENET_CONV2_O * LENET_CONV2_K),
+        .m = LENET_CONV2_M,
+        .k = LENET_CONV2_K,
+        .o = LENET_CONV2_O,
+    };
+    lenet_conv2_reduce_args = (GPGPUMatmulReduceArgs) {
+        .partial = gpgpu_tensor_make_1d_i32(
+            lenet_conv2_partial_addr,
+            LENET_CONV2_M * LENET_CONV2_O * LENET_CONV2_K),
+        .c = gpgpu_tensor_make_mo_i32(lenet_conv2_mo_addr,
+                                      LENET_CONV2_M, LENET_CONV2_O),
+        .bias = gpgpu_tensor_make_1d_i32(lenet_conv2_bias_addr,
+                                         LENET_CONV2_O),
+        .m = LENET_CONV2_M,
+        .k = LENET_CONV2_K,
+        .o = LENET_CONV2_O,
+        .output_shift = SUNNYHAZE_LENET_Q8_SHIFT,
+        .has_bias = 1,
+    };
+    lenet_mo2_args = (GPGPUMoToNchwArgs) {
+        .input = gpgpu_tensor_make_mo_i32(lenet_conv2_mo_addr,
+                                          LENET_CONV2_M, LENET_CONV2_O),
+        .output = gpgpu_tensor_make_nchw_i32(
+            lenet_conv2_nchw_addr, LENET_N, LENET_CONV2_O,
+            LENET_CONV2_OUT_H, LENET_CONV2_OUT_W),
+        .n = LENET_N,
+        .c = LENET_CONV2_O,
+        .h = LENET_CONV2_OUT_H,
+        .w = LENET_CONV2_OUT_W,
+    };
+    lenet_relu2_args = (GPGPUReluArgs) {
+        .input = gpgpu_tensor_make_nchw_i32(
+            lenet_conv2_nchw_addr, LENET_N, LENET_CONV2_O,
+            LENET_CONV2_OUT_H, LENET_CONV2_OUT_W),
+        .output = gpgpu_tensor_make_nchw_i32(
+            lenet_conv2_nchw_addr, LENET_N, LENET_CONV2_O,
+            LENET_CONV2_OUT_H, LENET_CONV2_OUT_W),
+    };
+    lenet_pool2_args = (GPGPUMaxPool2DArgs) {
+        .input = gpgpu_tensor_make_nchw_i32(
+            lenet_conv2_nchw_addr, LENET_N, LENET_CONV2_O,
+            LENET_CONV2_OUT_H, LENET_CONV2_OUT_W),
+        .output = gpgpu_tensor_make_nchw_i32(
+            lenet_pool2_addr, LENET_N, LENET_CONV2_O,
+            LENET_POOL2_H, LENET_POOL2_W),
+        .kernel_h = 2,
+        .kernel_w = 2,
+        .stride_h = 2,
+        .stride_w = 2,
+    };
+
+    lenet_fc1_partial_args = (GPGPUMatmulPartialArgs) {
+        .a = gpgpu_tensor_make_mk_i32(lenet_pool2_addr, 1, LENET_FC1_IN),
+        .b = gpgpu_tensor_make_ko_i32(lenet_fc1_weight_ko_addr,
+                                      LENET_FC1_IN, LENET_FC1_OUT),
+        .partial = gpgpu_tensor_make_1d_i32(
+            lenet_fc1_partial_addr, LENET_FC1_OUT * LENET_FC1_IN),
+        .m = 1,
+        .k = LENET_FC1_IN,
+        .o = LENET_FC1_OUT,
+    };
+    lenet_fc1_reduce_args = (GPGPUMatmulReduceArgs) {
+        .partial = gpgpu_tensor_make_1d_i32(
+            lenet_fc1_partial_addr, LENET_FC1_OUT * LENET_FC1_IN),
+        .c = gpgpu_tensor_make_mo_i32(lenet_fc1_out_addr, 1,
+                                      LENET_FC1_OUT),
+        .bias = gpgpu_tensor_make_1d_i32(lenet_fc1_bias_addr,
+                                         LENET_FC1_OUT),
+        .m = 1,
+        .k = LENET_FC1_IN,
+        .o = LENET_FC1_OUT,
+        .output_shift = SUNNYHAZE_LENET_Q8_SHIFT,
+        .has_bias = 1,
+    };
+    lenet_relu3_args = (GPGPUReluArgs) {
+        .input = gpgpu_tensor_make_1d_i32(lenet_fc1_out_addr, LENET_FC1_OUT),
+        .output = gpgpu_tensor_make_1d_i32(lenet_fc1_out_addr, LENET_FC1_OUT),
+    };
+    lenet_fc2_partial_args = (GPGPUMatmulPartialArgs) {
+        .a = gpgpu_tensor_make_mk_i32(lenet_fc1_out_addr, 1, LENET_FC1_OUT),
+        .b = gpgpu_tensor_make_ko_i32(lenet_fc2_weight_ko_addr,
+                                      LENET_FC1_OUT, LENET_FC2_OUT),
+        .partial = gpgpu_tensor_make_1d_i32(
+            lenet_fc2_partial_addr, LENET_FC2_OUT * LENET_FC1_OUT),
+        .m = 1,
+        .k = LENET_FC1_OUT,
+        .o = LENET_FC2_OUT,
+    };
+    lenet_fc2_reduce_args = (GPGPUMatmulReduceArgs) {
+        .partial = gpgpu_tensor_make_1d_i32(
+            lenet_fc2_partial_addr, LENET_FC2_OUT * LENET_FC1_OUT),
+        .c = gpgpu_tensor_make_mo_i32(lenet_fc2_out_addr, 1,
+                                      LENET_FC2_OUT),
+        .bias = gpgpu_tensor_make_1d_i32(lenet_fc2_bias_addr,
+                                         LENET_FC2_OUT),
+        .m = 1,
+        .k = LENET_FC1_OUT,
+        .o = LENET_FC2_OUT,
+        .output_shift = SUNNYHAZE_LENET_Q8_SHIFT,
+        .has_bias = 1,
+    };
+    lenet_relu4_args = (GPGPUReluArgs) {
+        .input = gpgpu_tensor_make_1d_i32(lenet_fc2_out_addr, LENET_FC2_OUT),
+        .output = gpgpu_tensor_make_1d_i32(lenet_fc2_out_addr, LENET_FC2_OUT),
+    };
+    lenet_fc3_partial_args = (GPGPUMatmulPartialArgs) {
+        .a = gpgpu_tensor_make_mk_i32(lenet_fc2_out_addr, 1, LENET_FC2_OUT),
+        .b = gpgpu_tensor_make_ko_i32(lenet_fc3_weight_ko_addr,
+                                      LENET_FC2_OUT, LENET_FC3_OUT),
+        .partial = gpgpu_tensor_make_1d_i32(
+            lenet_fc3_partial_addr, LENET_FC3_OUT * LENET_FC2_OUT),
+        .m = 1,
+        .k = LENET_FC2_OUT,
+        .o = LENET_FC3_OUT,
+    };
+    lenet_fc3_reduce_args = (GPGPUMatmulReduceArgs) {
+        .partial = gpgpu_tensor_make_1d_i32(
+            lenet_fc3_partial_addr, LENET_FC3_OUT * LENET_FC2_OUT),
+        .c = gpgpu_tensor_make_mo_i32(lenet_logits_addr, 1,
+                                      LENET_FC3_OUT),
+        .bias = gpgpu_tensor_make_1d_i32(lenet_fc3_bias_addr,
+                                         LENET_FC3_OUT),
+        .m = 1,
+        .k = LENET_FC2_OUT,
+        .o = LENET_FC3_OUT,
+        .output_shift = SUNNYHAZE_LENET_Q8_SHIFT,
+        .has_bias = 1,
+    };
+
+    ret = upload_args_checked(&dev, &lenet_args_addr[0], &lenet_im2col1_args,
+                              sizeof(lenet_im2col1_args),
+                              "args(lenet_im2col1)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, im2col_kernel_addr,
+             lenet_args_addr[0],
+             (GPGPURuntimeDim3){ LENET_N, LENET_CONV1_OUT_H,
+                                 LENET_CONV1_OUT_W },
+             (GPGPURuntimeDim3){ LENET_CONV1_KW, LENET_CONV1_KH,
+                                 LENET_IN_C });
+    ret = upload_args_checked(&dev, &lenet_args_addr[1], &lenet_oihw1_args,
+                              sizeof(lenet_oihw1_args),
+                              "args(lenet_oihw1)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, oihw_to_ko_kernel_addr,
+             lenet_args_addr[1],
+             (GPGPURuntimeDim3){ LENET_CONV1_O, LENET_IN_C,
+                                 LENET_CONV1_KH },
+             (GPGPURuntimeDim3){ LENET_CONV1_KW, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[2],
+                              &lenet_conv1_partial_args,
+                              sizeof(lenet_conv1_partial_args),
+                              "args(lenet_conv1_partial)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, matmul_partial_kernel_addr,
+             lenet_args_addr[2],
+             (GPGPURuntimeDim3){ LENET_CONV1_M, LENET_CONV1_O, 1 },
+             (GPGPURuntimeDim3){ LENET_CONV1_K, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[3],
+                              &lenet_conv1_reduce_args,
+                              sizeof(lenet_conv1_reduce_args),
+                              "args(lenet_conv1_reduce)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, matmul_reduce_kernel_addr,
+             lenet_args_addr[3],
+             (GPGPURuntimeDim3){ LENET_CONV1_M, 1, 1 },
+             (GPGPURuntimeDim3){ LENET_CONV1_O, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[4], &lenet_mo1_args,
+                              sizeof(lenet_mo1_args), "args(lenet_mo1)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, layout_kernel_addr,
+             lenet_args_addr[4],
+             (GPGPURuntimeDim3){ LENET_N, LENET_CONV1_O,
+                                 LENET_CONV1_OUT_H },
+             (GPGPURuntimeDim3){ LENET_CONV1_OUT_W, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[5], &lenet_relu1_args,
+                              sizeof(lenet_relu1_args), "args(lenet_relu1)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, relu_kernel_addr,
+             lenet_args_addr[5],
+             (GPGPURuntimeDim3){ 147, 1, 1 },
+             (GPGPURuntimeDim3){ 32, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[6], &lenet_pool1_args,
+                              sizeof(lenet_pool1_args), "args(lenet_pool1)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, pool_kernel_addr,
+             lenet_args_addr[6],
+             (GPGPURuntimeDim3){ LENET_N, LENET_CONV1_O, LENET_POOL1_H },
+             (GPGPURuntimeDim3){ LENET_POOL1_W, 1, 1 });
+
+    ret = upload_args_checked(&dev, &lenet_args_addr[7], &lenet_im2col2_args,
+                              sizeof(lenet_im2col2_args),
+                              "args(lenet_im2col2)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, im2col_kernel_addr,
+             lenet_args_addr[7],
+             (GPGPURuntimeDim3){ LENET_N, LENET_CONV2_OUT_H,
+                                 LENET_CONV2_OUT_W },
+             (GPGPURuntimeDim3){ LENET_CONV2_KW, LENET_CONV2_KH,
+                                 LENET_CONV1_O });
+    ret = upload_args_checked(&dev, &lenet_args_addr[8], &lenet_oihw2_args,
+                              sizeof(lenet_oihw2_args),
+                              "args(lenet_oihw2)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, oihw_to_ko_kernel_addr,
+             lenet_args_addr[8],
+             (GPGPURuntimeDim3){ LENET_CONV2_O, LENET_CONV1_O,
+                                 LENET_CONV2_KH },
+             (GPGPURuntimeDim3){ LENET_CONV2_KW, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[9],
+                              &lenet_conv2_partial_args,
+                              sizeof(lenet_conv2_partial_args),
+                              "args(lenet_conv2_partial)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, matmul_partial_kernel_addr,
+             lenet_args_addr[9],
+             (GPGPURuntimeDim3){ LENET_CONV2_M, LENET_CONV2_O, 1 },
+             (GPGPURuntimeDim3){ LENET_CONV2_K, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[10],
+                              &lenet_conv2_reduce_args,
+                              sizeof(lenet_conv2_reduce_args),
+                              "args(lenet_conv2_reduce)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, matmul_reduce_kernel_addr,
+             lenet_args_addr[10],
+             (GPGPURuntimeDim3){ LENET_CONV2_M, 1, 1 },
+             (GPGPURuntimeDim3){ LENET_CONV2_O, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[11], &lenet_mo2_args,
+                              sizeof(lenet_mo2_args), "args(lenet_mo2)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, layout_kernel_addr,
+             lenet_args_addr[11],
+             (GPGPURuntimeDim3){ LENET_N, LENET_CONV2_O,
+                                 LENET_CONV2_OUT_H },
+             (GPGPURuntimeDim3){ LENET_CONV2_OUT_W, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[12], &lenet_relu2_args,
+                              sizeof(lenet_relu2_args), "args(lenet_relu2)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, relu_kernel_addr,
+             lenet_args_addr[12],
+             (GPGPURuntimeDim3){ 50, 1, 1 },
+             (GPGPURuntimeDim3){ 32, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[13], &lenet_pool2_args,
+                              sizeof(lenet_pool2_args), "args(lenet_pool2)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, pool_kernel_addr,
+             lenet_args_addr[13],
+             (GPGPURuntimeDim3){ LENET_N, LENET_CONV2_O, LENET_POOL2_H },
+             (GPGPURuntimeDim3){ LENET_POOL2_W, 1, 1 });
+
+    ret = upload_args_checked(&dev, &lenet_args_addr[14],
+                              &lenet_fc1_partial_args,
+                              sizeof(lenet_fc1_partial_args),
+                              "args(lenet_fc1_partial)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, matmul_partial_kernel_addr,
+             lenet_args_addr[14],
+             (GPGPURuntimeDim3){ 1, LENET_FC1_OUT, 1 },
+             (GPGPURuntimeDim3){ LENET_FC1_IN, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[15],
+                              &lenet_fc1_reduce_args,
+                              sizeof(lenet_fc1_reduce_args),
+                              "args(lenet_fc1_reduce)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, matmul_reduce_kernel_addr,
+             lenet_args_addr[15],
+             (GPGPURuntimeDim3){ 1, 1, 1 },
+             (GPGPURuntimeDim3){ LENET_FC1_OUT, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[16], &lenet_relu3_args,
+                              sizeof(lenet_relu3_args), "args(lenet_relu3)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, relu_kernel_addr,
+             lenet_args_addr[16],
+             (GPGPURuntimeDim3){ 4, 1, 1 },
+             (GPGPURuntimeDim3){ 32, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[17],
+                              &lenet_fc2_partial_args,
+                              sizeof(lenet_fc2_partial_args),
+                              "args(lenet_fc2_partial)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, matmul_partial_kernel_addr,
+             lenet_args_addr[17],
+             (GPGPURuntimeDim3){ 1, LENET_FC2_OUT, 1 },
+             (GPGPURuntimeDim3){ LENET_FC1_OUT, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[18],
+                              &lenet_fc2_reduce_args,
+                              sizeof(lenet_fc2_reduce_args),
+                              "args(lenet_fc2_reduce)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, matmul_reduce_kernel_addr,
+             lenet_args_addr[18],
+             (GPGPURuntimeDim3){ 1, 1, 1 },
+             (GPGPURuntimeDim3){ LENET_FC2_OUT, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[19], &lenet_relu4_args,
+                              sizeof(lenet_relu4_args), "args(lenet_relu4)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, relu_kernel_addr,
+             lenet_args_addr[19],
+             (GPGPURuntimeDim3){ 3, 1, 1 },
+             (GPGPURuntimeDim3){ 32, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[20],
+                              &lenet_fc3_partial_args,
+                              sizeof(lenet_fc3_partial_args),
+                              "args(lenet_fc3_partial)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, matmul_partial_kernel_addr,
+             lenet_args_addr[20],
+             (GPGPURuntimeDim3){ 1, LENET_FC3_OUT, 1 },
+             (GPGPURuntimeDim3){ LENET_FC2_OUT, 1, 1 });
+    ret = upload_args_checked(&dev, &lenet_args_addr[21],
+                              &lenet_fc3_reduce_args,
+                              sizeof(lenet_fc3_reduce_args),
+                              "args(lenet_fc3_reduce)");
+    if (ret < 0) return ret;
+    add_node(lenet_nodes, &lenet_node_count, matmul_reduce_kernel_addr,
+             lenet_args_addr[21],
+             (GPGPURuntimeDim3){ 1, 1, 1 },
+             (GPGPURuntimeDim3){ LENET_FC3_OUT, 1, 1 });
+
+    ret = run_nodes(&dev, lenet_nodes, lenet_node_count, "gpgpu lenet");
+    if (ret < 0) {
+        return ret;
+    }
+    ret = gpgpu_read(&dev, lenet_logits_addr, lenet_logits,
+                     sizeof(lenet_logits));
+    if (ret < 0) {
+        report_ret("gpgpu_read(lenet_logits)", ret);
+        return ret;
+    }
+    for (uint32_t i = 0; i < LENET_FC3_OUT; ++i) {
+        uart_puts("gpgpu lenet_logit[");
+        uart_puthex32(i);
+        uart_puts("]=");
+        uart_puthex32((uint32_t)lenet_logits[i]);
+        uart_puts("\n");
+        if (lenet_logits[i] > lenet_logits[lenet_pred]) {
+            lenet_pred = i;
+        }
+    }
+    trace_u32("gpgpu lenet_expected", MNIST_TEST0_LABEL);
+    trace_u32("gpgpu lenet_pred", lenet_pred);
+    uart_puts("gpgpu lenet ");
+    uart_puts(lenet_pred == MNIST_TEST0_LABEL ? "PASS\n" : "FAIL\n");
+    return lenet_pred == MNIST_TEST0_LABEL ? 0 : 1;
 }
