@@ -581,3 +581,79 @@ launch linear_reduce_i32
 
 两次 launch 之间的边界就是全局同步点。后续加入 block 内同步、atomic
 或 warp-level reduction 后，可以把 reduce 阶段融合回单 kernel。
+
+## 20. MK、KO、MO 这些 layout 到底是什么意思？
+
+layout 的作用是告诉 kernel 如何解释一段连续内存。
+
+内存本身只是：
+
+```text
+data[0], data[1], data[2], ...
+```
+
+layout 说明这些元素应该按什么维度取下标。矩阵乘当前只讨论三个 layout：
+
+```text
+MK: A[m][k]，M 行 K 列
+KO: B[k][o]，K 行 O 列
+MO: C[m][o]，M 行 O 列
+```
+
+也就是标准矩阵乘：
+
+```text
+C = A * B
+C[m][o] = sum_k A[m][k] * B[k][o]
+```
+
+如果 `A` 是 `[M, K]`，行主序 offset 是：
+
+```text
+A[m][k] -> m * K + k
+```
+
+如果 `B` 是 `[K, O]`：
+
+```text
+B[k][o] -> k * O + o
+```
+
+如果 `C` 是 `[M, O]`：
+
+```text
+C[m][o] -> m * O + o
+```
+
+所以 `MK/KO/MO` 不是硬件概念，也不是额外数据本身。它们只是约定：
+
+```text
+同一段 VRAM 中的连续数字，kernel 应该按几行几列解释。
+```
+
+当前 matmul smoke 使用两阶段：
+
+```text
+matmul_partial_i32:
+  grid.x  = M
+  grid.y  = O
+  block.x = K
+
+  blockIdx.x  -> m
+  blockIdx.y  -> o
+  threadIdx.x -> k
+
+  partial[m][o][k] = A[m][k] * B[k][o]
+
+matmul_reduce_i32:
+  grid.x  = M
+  block.x = O
+
+  blockIdx.x  -> m
+  threadIdx.x -> o
+
+  C[m][o] = sum_k partial[m][o][k]
+```
+
+后续做 conv lowering 时，会先把卷积输入窗口整理成 `MK`，把卷积权重整理
+成 `KO`，再直接复用这套 matmul。

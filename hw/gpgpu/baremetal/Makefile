@@ -20,6 +20,8 @@ RELU_I32_KERNEL_INC := $(BUILD_DIR)/relu_i32_kernel.inc
 LINEAR_I32_KERNEL_INC := $(BUILD_DIR)/linear_i32_kernel.inc
 LINEAR_PARTIAL_I32_KERNEL_INC := $(BUILD_DIR)/linear_partial_i32_kernel.inc
 LINEAR_REDUCE_I32_KERNEL_INC := $(BUILD_DIR)/linear_reduce_i32_kernel.inc
+MATMUL_PARTIAL_I32_KERNEL_INC := $(BUILD_DIR)/matmul_partial_i32_kernel.inc
+MATMUL_REDUCE_I32_KERNEL_INC := $(BUILD_DIR)/matmul_reduce_i32_kernel.inc
 
 CFLAGS := -march=rv64imac -mabi=lp64 -mcmodel=medany
 CFLAGS += -Wall -Wextra -ffreestanding -fno-builtin -fno-common
@@ -47,7 +49,7 @@ $(BUILD_DIR):
 $(BUILD_DIR)/start.o: $(SCRIPT_DIR)/start.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(THREAD_ADD_KERNEL_INC) $(RELU_I32_KERNEL_INC) $(LINEAR_I32_KERNEL_INC) $(LINEAR_PARTIAL_I32_KERNEL_INC) $(LINEAR_REDUCE_I32_KERNEL_INC) | $(BUILD_DIR)
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(THREAD_ADD_KERNEL_INC) $(RELU_I32_KERNEL_INC) $(LINEAR_I32_KERNEL_INC) $(LINEAR_PARTIAL_I32_KERNEL_INC) $(LINEAR_REDUCE_I32_KERNEL_INC) $(MATMUL_PARTIAL_I32_KERNEL_INC) $(MATMUL_REDUCE_I32_KERNEL_INC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/thread_add_kernel.o: $(GPGPU_KERNEL_DIR)/thread_add_kernel.c | $(BUILD_DIR)
@@ -122,6 +124,36 @@ $(BUILD_DIR)/linear_reduce_i32_kernel.dis: $(BUILD_DIR)/linear_reduce_i32_kernel
 $(LINEAR_REDUCE_I32_KERNEL_INC): $(BUILD_DIR)/linear_reduce_i32_kernel.bin $(BUILD_DIR)/linear_reduce_i32_kernel.dis
 	printf 'static const uint32_t linear_reduce_i32_kernel_code[] = {\n' > $@
 	od -An -v -tx4 $(BUILD_DIR)/linear_reduce_i32_kernel.bin | \
+	    awk '{ for (i = 1; i <= NF; ++i) printf "    0x%s,\n", $$i }' >> $@
+	printf '};\n' >> $@
+
+$(BUILD_DIR)/matmul_partial_i32_kernel.o: $(GPGPU_KERNEL_DIR)/matmul_partial_i32_kernel.c | $(BUILD_DIR)
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/matmul_partial_i32_kernel.bin: $(BUILD_DIR)/matmul_partial_i32_kernel.o
+	$(OBJCOPY) -O binary -j .text $< $@
+
+$(BUILD_DIR)/matmul_partial_i32_kernel.dis: $(BUILD_DIR)/matmul_partial_i32_kernel.o
+	$(OBJDUMP) -dr $< > $@
+
+$(MATMUL_PARTIAL_I32_KERNEL_INC): $(BUILD_DIR)/matmul_partial_i32_kernel.bin $(BUILD_DIR)/matmul_partial_i32_kernel.dis
+	printf 'static const uint32_t matmul_partial_i32_kernel_code[] = {\n' > $@
+	od -An -v -tx4 $(BUILD_DIR)/matmul_partial_i32_kernel.bin | \
+	    awk '{ for (i = 1; i <= NF; ++i) printf "    0x%s,\n", $$i }' >> $@
+	printf '};\n' >> $@
+
+$(BUILD_DIR)/matmul_reduce_i32_kernel.o: $(GPGPU_KERNEL_DIR)/matmul_reduce_i32_kernel.c | $(BUILD_DIR)
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/matmul_reduce_i32_kernel.bin: $(BUILD_DIR)/matmul_reduce_i32_kernel.o
+	$(OBJCOPY) -O binary -j .text $< $@
+
+$(BUILD_DIR)/matmul_reduce_i32_kernel.dis: $(BUILD_DIR)/matmul_reduce_i32_kernel.o
+	$(OBJDUMP) -dr $< > $@
+
+$(MATMUL_REDUCE_I32_KERNEL_INC): $(BUILD_DIR)/matmul_reduce_i32_kernel.bin $(BUILD_DIR)/matmul_reduce_i32_kernel.dis
+	printf 'static const uint32_t matmul_reduce_i32_kernel_code[] = {\n' > $@
+	od -An -v -tx4 $(BUILD_DIR)/matmul_reduce_i32_kernel.bin | \
 	    awk '{ for (i = 1; i <= NF; ++i) printf "    0x%s,\n", $$i }' >> $@
 	printf '};\n' >> $@
 

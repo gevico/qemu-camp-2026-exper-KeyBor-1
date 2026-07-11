@@ -29,6 +29,9 @@ typedef enum GPGPUTensorLayout {
     GPGPU_LAYOUT_OIHW = 2,
     GPGPU_LAYOUT_1D   = 3,
     GPGPU_LAYOUT_OI   = 4,
+    GPGPU_LAYOUT_MK   = 5,
+    GPGPU_LAYOUT_KO   = 6,
+    GPGPU_LAYOUT_MO   = 7,
 } GPGPUTensorLayout;
 
 typedef struct GPGPUTensorDesc {
@@ -121,6 +124,63 @@ static inline GPGPUTensorDesc gpgpu_tensor_make_oi_i32(uint32_t data,
         .stride_h = 1,
         .stride_c = 1,
         .stride_n = in_features,
+    };
+}
+
+static inline GPGPUTensorDesc gpgpu_tensor_make_mk_i32(uint32_t data,
+                                                       uint32_t rows,
+                                                       uint32_t reduction)
+{
+    return (GPGPUTensorDesc) {
+        .data = data,
+        .dtype = GPGPU_DTYPE_I32,
+        .layout = GPGPU_LAYOUT_MK,
+        .n = rows,
+        .c = reduction,
+        .h = 1,
+        .w = 1,
+        .stride_w = 1,
+        .stride_h = 1,
+        .stride_c = 1,
+        .stride_n = reduction,
+    };
+}
+
+static inline GPGPUTensorDesc gpgpu_tensor_make_ko_i32(uint32_t data,
+                                                       uint32_t reduction,
+                                                       uint32_t cols)
+{
+    return (GPGPUTensorDesc) {
+        .data = data,
+        .dtype = GPGPU_DTYPE_I32,
+        .layout = GPGPU_LAYOUT_KO,
+        .n = reduction,
+        .c = cols,
+        .h = 1,
+        .w = 1,
+        .stride_w = 1,
+        .stride_h = 1,
+        .stride_c = 1,
+        .stride_n = cols,
+    };
+}
+
+static inline GPGPUTensorDesc gpgpu_tensor_make_mo_i32(uint32_t data,
+                                                       uint32_t rows,
+                                                       uint32_t cols)
+{
+    return (GPGPUTensorDesc) {
+        .data = data,
+        .dtype = GPGPU_DTYPE_I32,
+        .layout = GPGPU_LAYOUT_MO,
+        .n = rows,
+        .c = cols,
+        .h = 1,
+        .w = 1,
+        .stride_w = 1,
+        .stride_h = 1,
+        .stride_c = 1,
+        .stride_n = cols,
     };
 }
 

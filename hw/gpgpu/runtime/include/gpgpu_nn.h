@@ -26,6 +26,8 @@ typedef enum GPGPUOpType {
     GPGPU_OP_LINEAR         = 3,
     GPGPU_OP_LINEAR_PARTIAL = 4,
     GPGPU_OP_LINEAR_REDUCE  = 5,
+    GPGPU_OP_MATMUL_PARTIAL = 6,
+    GPGPU_OP_MATMUL_REDUCE  = 7,
 } GPGPUOpType;
 
 typedef struct GPGPUConv2DArgs {
@@ -82,6 +84,23 @@ typedef struct GPGPULinearReduceArgs {
     uint32_t in_features;
     uint32_t out_features;
 } GPGPULinearReduceArgs;
+
+typedef struct GPGPUMatmulPartialArgs {
+    GPGPUTensorDesc a;        /* MK matrix: [m, k]. */
+    GPGPUTensorDesc b;        /* KO matrix: [k, o]. */
+    GPGPUTensorDesc partial;  /* Flat scratch: [m * o * k]. */
+    uint32_t m;
+    uint32_t k;
+    uint32_t o;
+} GPGPUMatmulPartialArgs;
+
+typedef struct GPGPUMatmulReduceArgs {
+    GPGPUTensorDesc partial;  /* Flat scratch: [m * o * k]. */
+    GPGPUTensorDesc c;        /* MO matrix: [m, o]. */
+    uint32_t m;
+    uint32_t k;
+    uint32_t o;
+} GPGPUMatmulReduceArgs;
 
 typedef struct GPGPUNodeDesc {
     uint32_t op_type;       /* GPGPUOpType */

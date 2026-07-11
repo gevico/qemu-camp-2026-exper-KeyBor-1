@@ -52,6 +52,8 @@ runtime/include/gpgpu_nn.h
 GPGPUTensorDesc = data VRAM offset + dtype + layout + shape + stride
 GPGPUConv2DArgs / GPGPUReluArgs / GPGPUMaxPool2DArgs / GPGPULinearArgs =
   per-op kernel args layout
+GPGPUMatmulPartialArgs / GPGPUMatmulReduceArgs =
+  two-stage matrix multiply args layout
 GPGPUNodeDesc / GPGPUNetworkDesc =
   host-side execution plan
 ```

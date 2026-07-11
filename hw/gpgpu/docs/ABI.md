@@ -273,12 +273,51 @@ block.x = in_features
 
 其中 `blockIdx.x` 表示输出行，`threadIdx.x` 表示输入列。
 
+矩阵乘使用三个矩阵 layout：
+
+```text
+A = MK = [M, K]
+B = KO = [K, O]
+C = MO = [M, O]
+```
+
+计算公式：
+
+```text
+C[m][o] = sum_k A[m][k] * B[k][o]
+```
+
+第一版 matmul 也拆成两个 kernel：
+
+```text
+kernel_args -> GPGPUMatmulPartialArgs
+GPGPUMatmulPartialArgs.a.data       -> MK matrix
+GPGPUMatmulPartialArgs.b.data       -> KO matrix
+GPGPUMatmulPartialArgs.partial.data -> flat partial scratch
+
+kernel_args -> GPGPUMatmulReduceArgs
+GPGPUMatmulReduceArgs.partial.data -> flat partial scratch
+GPGPUMatmulReduceArgs.c.data       -> MO matrix
+```
+
+`matmul_partial_i32` 使用：
+
+```text
+grid.x  = M
+grid.y  = O
+block.x = K
+```
+
+其中 `blockIdx.x` 表示 A/C 的行 `m`，`blockIdx.y` 表示 B/C 的列 `o`，
+`threadIdx.x` 表示归约维度 `k`。
+
 device kernel 的类型解释由 `kernel_addr` 决定：ReLU kernel 把 `x10`
 解释为 `GPGPUReluArgs *`，Linear kernel 把 `x10` 解释为
 `GPGPULinearArgs *` / `GPGPULinearPartialArgs *` /
-`GPGPULinearReduceArgs *`，Conv2D kernel 把 `x10` 解释为
-`GPGPUConv2DArgs *`。第一版不在 args struct 中加入统一的 op type 或
-magic header。
+`GPGPULinearReduceArgs *`，Matmul kernel 把 `x10` 解释为
+`GPGPUMatmulPartialArgs *` / `GPGPUMatmulReduceArgs *`，Conv2D kernel
+把 `x10` 解释为 `GPGPUConv2DArgs *`。第一版不在 args struct 中加入
+统一的 op type 或 magic header。
 
 第一版约定：
 
@@ -286,6 +325,7 @@ magic header。
 activation layout = NCHW
 conv weight layout = OIHW
 linear weight layout = OI
+matmul layout = MK / KO / MO
 dtype = GPGPU_DTYPE_I32
 stride 单位 = element，不是 byte
 network descriptor = host-side execution plan，不放入 VRAM
