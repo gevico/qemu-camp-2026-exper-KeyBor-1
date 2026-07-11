@@ -14,6 +14,8 @@
 #define GPGPU_REG_ERROR_STATUS  0x0108
 
 #define RELU_TEST_LEN 16
+#define LINEAR_IN_FEATURES 4
+#define LINEAR_OUT_FEATURES 3
 
 #define RV_RD(rd)          ((uint32_t)(rd) << 7)
 #define RV_RS1(rs1)        ((uint32_t)(rs1) << 15)
@@ -34,6 +36,7 @@
 
 #include "build/thread_add_kernel.inc"
 #include "build/relu_i32_kernel.inc"
+#include "build/linear_i32_kernel.inc"
 
 static void uart_putc(char c)
 {
@@ -141,6 +144,23 @@ int main(void)
     uint32_t relu_args_addr;
     GPGPUReluArgs relu_args;
     int relu_ok = 1;
+    int32_t linear_input[LINEAR_IN_FEATURES] = { 2, -1, 3, 4 };
+    int32_t linear_weight[LINEAR_OUT_FEATURES * LINEAR_IN_FEATURES] = {
+        1, 2, 3, 4,
+        -1, 0, 2, 1,
+        3, -2, 1, 0,
+    };
+    int32_t linear_bias[LINEAR_OUT_FEATURES] = { 5, -3, 7 };
+    int32_t linear_output[LINEAR_OUT_FEATURES];
+    int32_t linear_expected[LINEAR_OUT_FEATURES];
+    uint32_t linear_input_addr;
+    uint32_t linear_weight_addr;
+    uint32_t linear_bias_addr;
+    uint32_t linear_output_addr;
+    uint32_t linear_kernel_addr;
+    uint32_t linear_args_addr;
+    GPGPULinearArgs linear_args;
+    int linear_ok = 1;
     int ret;
 
     /*
@@ -398,5 +418,126 @@ int main(void)
 
     uart_puts("gpgpu relu_i32 ");
     uart_puts(relu_ok ? "PASS\n" : "FAIL\n");
-    return relu_ok ? 0 : 1;
+    if (!relu_ok) {
+        return 1;
+    }
+
+    for (uint32_t o = 0; o < LINEAR_OUT_FEATURES; ++o) {
+        int32_t acc = linear_bias[o];
+
+        linear_output[o] = 0x55555555;
+        for (uint32_t i = 0; i < LINEAR_IN_FEATURES; ++i) {
+            acc += linear_input[i] *
+                   linear_weight[o * LINEAR_IN_FEATURES + i];
+        }
+        linear_expected[o] = acc;
+    }
+
+    ret = gpgpu_malloc(&dev, &linear_input_addr, sizeof(linear_input));
+    if (ret < 0) {
+        report_ret("gpgpu_malloc(linear_input)", ret);
+        return ret;
+    }
+    ret = gpgpu_malloc(&dev, &linear_weight_addr, sizeof(linear_weight));
+    if (ret < 0) {
+        report_ret("gpgpu_malloc(linear_weight)", ret);
+        return ret;
+    }
+    ret = gpgpu_malloc(&dev, &linear_bias_addr, sizeof(linear_bias));
+    if (ret < 0) {
+        report_ret("gpgpu_malloc(linear_bias)", ret);
+        return ret;
+    }
+    ret = gpgpu_malloc(&dev, &linear_output_addr, sizeof(linear_output));
+    if (ret < 0) {
+        report_ret("gpgpu_malloc(linear_output)", ret);
+        return ret;
+    }
+    ret = gpgpu_write(&dev, linear_input_addr, linear_input,
+                      sizeof(linear_input));
+    if (ret < 0) {
+        report_ret("gpgpu_write(linear_input)", ret);
+        return ret;
+    }
+    ret = gpgpu_write(&dev, linear_weight_addr, linear_weight,
+                      sizeof(linear_weight));
+    if (ret < 0) {
+        report_ret("gpgpu_write(linear_weight)", ret);
+        return ret;
+    }
+    ret = gpgpu_write(&dev, linear_bias_addr, linear_bias,
+                      sizeof(linear_bias));
+    if (ret < 0) {
+        report_ret("gpgpu_write(linear_bias)", ret);
+        return ret;
+    }
+    ret = gpgpu_write(&dev, linear_output_addr, linear_output,
+                      sizeof(linear_output));
+    if (ret < 0) {
+        report_ret("gpgpu_write(linear_output)", ret);
+        return ret;
+    }
+
+    linear_args = (GPGPULinearArgs) {
+        .input = gpgpu_tensor_make_1d_i32(linear_input_addr,
+                                          LINEAR_IN_FEATURES),
+        .weight = gpgpu_tensor_make_oi_i32(linear_weight_addr,
+                                           LINEAR_OUT_FEATURES,
+                                           LINEAR_IN_FEATURES),
+        .bias = gpgpu_tensor_make_1d_i32(linear_bias_addr,
+                                         LINEAR_OUT_FEATURES),
+        .output = gpgpu_tensor_make_1d_i32(linear_output_addr,
+                                           LINEAR_OUT_FEATURES),
+        .in_features = LINEAR_IN_FEATURES,
+        .out_features = LINEAR_OUT_FEATURES,
+    };
+
+    ret = gpgpu_upload_kernel(&dev, &linear_kernel_addr,
+                              linear_i32_kernel_code,
+                              sizeof(linear_i32_kernel_code) /
+                              sizeof(linear_i32_kernel_code[0]));
+    if (ret < 0) {
+        report_ret("gpgpu_upload_kernel(linear_i32)", ret);
+        return ret;
+    }
+    ret = gpgpu_upload_args(&dev, &linear_args_addr, &linear_args,
+                            sizeof(linear_args));
+    if (ret < 0) {
+        report_ret("gpgpu_upload_args(linear_i32)", ret);
+        return ret;
+    }
+
+    ret = gpgpu_launch(&dev, linear_kernel_addr, linear_args_addr,
+                       (GPGPURuntimeDim3){ 1, 1, 1 },
+                       (GPGPURuntimeDim3){ 4, 1, 1 });
+    trace_u32("gpgpu linear_i32 global_status",
+              ctrl_read32(&dev, GPGPU_REG_GLOBAL_STATUS));
+    trace_u32("gpgpu linear_i32 error_status",
+              ctrl_read32(&dev, GPGPU_REG_ERROR_STATUS));
+    if (ret < 0) {
+        report_ret("gpgpu_launch(linear_i32)", ret);
+        return ret;
+    }
+
+    ret = gpgpu_read(&dev, linear_output_addr, linear_output,
+                     sizeof(linear_output));
+    if (ret < 0) {
+        report_ret("gpgpu_read(linear_i32)", ret);
+        return ret;
+    }
+
+    for (uint32_t i = 0; i < LINEAR_OUT_FEATURES; ++i) {
+        uart_puts("gpgpu linear_i32[");
+        uart_puthex32(i);
+        uart_puts("]=");
+        uart_puthex32((uint32_t)linear_output[i]);
+        uart_puts("\n");
+        if (linear_output[i] != linear_expected[i]) {
+            linear_ok = 0;
+        }
+    }
+
+    uart_puts("gpgpu linear_i32 ");
+    uart_puts(linear_ok ? "PASS\n" : "FAIL\n");
+    return linear_ok ? 0 : 1;
 }

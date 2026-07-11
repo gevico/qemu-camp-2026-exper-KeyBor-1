@@ -240,10 +240,20 @@ GPGPUReluArgs.input.data  -> input tensor VRAM allocation
 GPGPUReluArgs.output.data -> output tensor VRAM allocation
 ```
 
+例如 Linear：
+
+```text
+kernel_args -> GPGPULinearArgs
+GPGPULinearArgs.input.data  -> 1D input tensor, length in_features
+GPGPULinearArgs.weight.data -> OI weight tensor, [out_features, in_features]
+GPGPULinearArgs.bias.data   -> 1D bias tensor, length out_features
+GPGPULinearArgs.output.data -> 1D output tensor, length out_features
+```
+
 device kernel 的类型解释由 `kernel_addr` 决定：ReLU kernel 把 `x10`
-解释为 `GPGPUReluArgs *`，Conv2D kernel 把 `x10` 解释为
-`GPGPUConv2DArgs *`。第一版不在 args struct 中加入统一的 op type 或
-magic header。
+解释为 `GPGPUReluArgs *`，Linear kernel 把 `x10` 解释为
+`GPGPULinearArgs *`，Conv2D kernel 把 `x10` 解释为 `GPGPUConv2DArgs *`。
+第一版不在 args struct 中加入统一的 op type 或 magic header。
 
 第一版约定：
 
