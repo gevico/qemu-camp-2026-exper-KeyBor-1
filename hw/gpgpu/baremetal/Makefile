@@ -58,6 +58,9 @@ TEST_SRCS := \
 	maxpool_smoke.c \
 	lenet_smoke.c
 TEST_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(TEST_SRCS))
+TEST_ASM_SRCS := \
+	mnist_samples.S
+TEST_ASM_OBJS := $(patsubst %.S,$(BUILD_DIR)/%.o,$(TEST_ASM_SRCS))
 
 CFLAGS := -march=rv64imac -mabi=lp64 -mcmodel=medany
 CFLAGS += -Wall -Wextra -ffreestanding -fno-builtin -fno-common
@@ -73,6 +76,7 @@ OBJS := \
 	$(BUILD_DIR)/start.o \
 	$(BUILD_DIR)/main.o \
 	$(TEST_OBJS) \
+	$(TEST_ASM_OBJS) \
 	$(BUILD_DIR)/gpgpu_runtime.o \
 	$(BUILD_DIR)/gpgpu_pci.o
 
@@ -90,6 +94,9 @@ $(BUILD_DIR)/main.o: $(SRC_DIR)/main.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/%.o: $(TEST_SRC_DIR)/%.c $(KERNEL_INCS) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/%.o: $(TEST_SRC_DIR)/%.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/thread_add_kernel.o: $(GPGPU_KERNEL_DIR)/thread_add_kernel.c | $(BUILD_DIR)

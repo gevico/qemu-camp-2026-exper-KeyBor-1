@@ -1,6 +1,8 @@
 #include "test_common.h"
-#include "../../../assets/lenet/mnist_samples_q8.h"
 #include "../../../assets/lenet/sunnyhaze_lenet_q8_weights.h"
+
+extern const uint32_t mnist_samples_q8_blob_start[];
+extern const uint32_t mnist_samples_q8_blob_end[];
 
 int run_lenet_smoke(GPGPURuntimeDevice *dev)
 {
@@ -40,6 +42,13 @@ int run_lenet_smoke(GPGPURuntimeDevice *dev)
     uint32_t lenet_fc3_bias_addr;
     uint32_t lenet_fc3_partial_addr;
     uint32_t lenet_logits_addr;
+    const uint32_t *mnist_blob = mnist_samples_q8_blob_start;
+    uint32_t mnist_sample_count = mnist_blob[0];
+    uint32_t mnist_sample_h = mnist_blob[1];
+    uint32_t mnist_sample_w = mnist_blob[2];
+    const uint32_t *mnist_sample_labels = mnist_blob + 3;
+    const int32_t *mnist_samples_q8 =
+        (const int32_t *)(mnist_sample_labels + mnist_sample_count);
     uint32_t lenet_args_addr[LENET_NODE_MAX];
     GPGPUNodeDesc lenet_nodes[LENET_NODE_MAX];
     uint32_t lenet_node_count = 0;
@@ -69,6 +78,12 @@ int run_lenet_smoke(GPGPURuntimeDevice *dev)
     GPGPUMatmulPartialArgs lenet_fc3_partial_args;
     GPGPUMatmulReduceArgs lenet_fc3_reduce_args;
     int ret;
+
+    if (mnist_sample_h != LENET_IN_H || mnist_sample_w != LENET_IN_W ||
+        mnist_sample_count == 0) {
+        report_ret("mnist_samples_q8_blob", -1);
+        return -1;
+    }
 
     ret = gpgpu_upload_kernel(dev, &im2col_kernel_addr,
                               im2col_i32_kernel_code,
@@ -664,8 +679,12 @@ int run_lenet_smoke(GPGPURuntimeDevice *dev)
              (GPGPURuntimeDim3){ 1, 1, 1 },
              (GPGPURuntimeDim3){ LENET_FC3_OUT, 1, 1 });
 
-    for (uint32_t sample = 0; sample < MNIST_SAMPLE_COUNT; ++sample) {
-        ret = gpgpu_write(dev, lenet_input_addr, mnist_samples_q8[sample],
+    for (uint32_t sample = 0; sample < mnist_sample_count; ++sample) {
+        const int32_t *sample_q8 =
+            mnist_samples_q8 +
+            sample * LENET_N * LENET_IN_C * LENET_IN_H * LENET_IN_W;
+
+        ret = gpgpu_write(dev, lenet_input_addr, sample_q8,
                           LENET_N * LENET_IN_C * LENET_IN_H * LENET_IN_W *
                           sizeof(int32_t));
         if (ret < 0) {
@@ -688,6 +707,7 @@ int run_lenet_smoke(GPGPURuntimeDevice *dev)
         uart_puts("gpgpu lenet_sample=");
         uart_puthex32(sample);
         uart_puts("\n");
+        trace_u32("gpgpu lenet_mnist_test_index", sample);
         for (uint32_t i = 0; i < LENET_FC3_OUT; ++i) {
             uart_puts("gpgpu lenet_logit[");
             uart_puthex32(i);
@@ -710,7 +730,7 @@ int run_lenet_smoke(GPGPURuntimeDevice *dev)
     }
 
     trace_u32("gpgpu lenet_correct", lenet_correct);
-    trace_u32("gpgpu lenet_total", MNIST_SAMPLE_COUNT);
+    trace_u32("gpgpu lenet_total", mnist_sample_count);
     uart_puts("gpgpu lenet DIAGNOSTIC\n");
     return 0;
 }
