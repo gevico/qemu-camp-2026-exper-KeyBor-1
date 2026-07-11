@@ -322,7 +322,22 @@ GPGPUMatmulPartialArgs.partial.data -> flat partial scratch
 kernel_args -> GPGPUMatmulReduceArgs
 GPGPUMatmulReduceArgs.partial.data -> flat partial scratch
 GPGPUMatmulReduceArgs.c.data       -> MO matrix
+GPGPUMatmulReduceArgs.bias.data    -> optional 1D bias
 ```
+
+`matmul_reduce_i32` computes:
+
+```text
+acc = sum_k partial[(m * O + o) * K + k]
+if output_shift != 0:
+  acc = acc >> output_shift
+if has_bias != 0:
+  acc = acc + bias[o]
+C[m][o] = acc
+```
+
+Raw integer smoke tests use `output_shift = 0` and `has_bias = 0`.
+Q8.8 inference typically uses `output_shift = 8` and Q8.8 bias.
 
 `matmul_partial_i32` 使用：
 
@@ -366,6 +381,15 @@ M = N * out_h * out_w
 K = in_channels * kernel_h * kernel_w
 O = out_channels
 ```
+
+`im2col_i32` 支持 zero padding：
+
+```text
+ih = oh * stride_h + kh - pad_h
+iw = ow * stride_w + kw - pad_w
+```
+
+当 `(ih, iw)` 落在输入边界外时，对应 lowered matrix 元素写 0。
 
 第一版 maxpool2d 使用 direct kernel：
 

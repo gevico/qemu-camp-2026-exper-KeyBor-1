@@ -920,3 +920,42 @@ lane->gpr[2]   = 用寄存器编号作为数组下标访问模拟寄存器
 所以更准确的说法是：RISC-V 指令编码使用 `rs1/rs2/rd` 寄存器编号；
 我们的解释器再把这个编号作为 `gpr[]` 下标。`lw/sw` 里的 immediate
 才是内存地址偏移。
+
+## 25. Q8.8 定点量化在当前推理链路里怎么理解？
+
+第一版 LeNet 推理先采用 per-tensor 的 Q8.8 定点格式：
+
+```text
+real_value ~= int32_value / 256
+int32_value = round(real_value * 256)
+```
+
+输入像素、权重、bias、activation 都用 `int32` 保存，但数值含义是 Q8.8。
+这样做的原因是当前 device kernel 已经支持 `int32` load/store 和乘加，
+不用先补完整浮点路径。
+
+两个 Q8.8 数相乘时：
+
+```text
+(a_real * 256) * (b_real * 256) = a_real * b_real * 65536
+```
+
+乘积变成 Q16.16。多个乘积累加后仍然是 Q16.16，所以输出要回到 Q8.8：
+
+```text
+acc_q8_8 = acc_q16_16 >> 8
+```
+
+这就是 `GPGPUMatmulReduceArgs.output_shift = 8` 的含义。raw i32 smoke
+不做定点缩放，所以 `output_shift = 0`。
+
+Bias 需要和输出 activation 使用同一 scale。对于当前 Q8.8 方案：
+
+```text
+bias_q8_8 = round(bias_float * 256)
+output_q8_8 = (sum(input_q8_8 * weight_q8_8) >> 8) + bias_q8_8
+```
+
+这个方案不是最高精度的量化方案，只是最容易和当前 RV32 int kernel 对齐。
+后续如果要提高精度，可以演进到 per-channel weight scale、rounding shift、
+saturation/clamp，以及真正的 int8 storage。

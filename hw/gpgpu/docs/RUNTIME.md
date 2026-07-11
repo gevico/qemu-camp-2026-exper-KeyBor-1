@@ -85,6 +85,11 @@ For CNN-style kernels, `kernel_args` should point to an op-specific args struct
 in VRAM. Tensor data, weights, bias, and output buffers are independent VRAM
 allocations; the args struct stores their descriptors and VRAM offsets.
 
+For fixed-point CNN inference, current i32 kernels use Q8.8 values stored in
+`int32_t`. `GPGPUIm2ColArgs.pad_h/pad_w` model zero padding. The matmul reduce
+stage uses `GPGPUMatmulReduceArgs.output_shift` to convert the accumulated
+Q16.16 sum back to Q8.8, and optionally adds `bias[o]` when `has_bias != 0`.
+
 ## Limitations
 
 - Allocator is bump-only and does not support free.

@@ -99,9 +99,12 @@ typedef struct GPGPUMatmulPartialArgs {
 typedef struct GPGPUMatmulReduceArgs {
     GPGPUTensorDesc partial;  /* Flat scratch: [m * o * k]. */
     GPGPUTensorDesc c;        /* MO matrix: [m, o]. */
+    GPGPUTensorDesc bias;     /* Optional 1D tensor, length o. */
     uint32_t m;
     uint32_t k;
     uint32_t o;
+    uint32_t output_shift;    /* Right shift after reduction. 0 keeps raw i32. */
+    uint32_t has_bias;
 } GPGPUMatmulReduceArgs;
 
 typedef struct GPGPUIm2ColArgs {
@@ -109,6 +112,8 @@ typedef struct GPGPUIm2ColArgs {
     GPGPUTensorDesc output;  /* MK matrix: [n * out_h * out_w, c * kernel_h * kernel_w]. */
     uint32_t kernel_h;
     uint32_t kernel_w;
+    uint32_t pad_h;
+    uint32_t pad_w;
     uint32_t stride_h;
     uint32_t stride_w;
     uint32_t out_h;
