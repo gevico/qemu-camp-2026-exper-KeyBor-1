@@ -40,8 +40,8 @@ int gpgpu_read(GPGPURuntimeDevice *dev, uint32_t src, void *dst, size_t size);
 
 int gpgpu_upload_kernel(GPGPURuntimeDevice *dev, uint32_t *kernel_addr,
                         const uint32_t *code, size_t num_words);
-int gpgpu_pack_args(GPGPURuntimeDevice *dev, uint32_t *args_addr,
-                    const uint32_t *args, uint32_t num_args);
+int gpgpu_upload_args(GPGPURuntimeDevice *dev, uint32_t *args_addr,
+                      const void *args, size_t size);
 
 int gpgpu_launch(GPGPURuntimeDevice *dev, uint32_t kernel_addr,
                  uint32_t kernel_args, GPGPURuntimeDim3 grid,

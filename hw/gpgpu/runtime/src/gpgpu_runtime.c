@@ -175,19 +175,13 @@ int gpgpu_upload_kernel(GPGPURuntimeDevice *dev, uint32_t *kernel_addr,
     return 0;
 }
 
-int gpgpu_pack_args(GPGPURuntimeDevice *dev, uint32_t *args_addr,
-                    const uint32_t *args, uint32_t num_args)
+int gpgpu_upload_args(GPGPURuntimeDevice *dev, uint32_t *args_addr,
+                      const void *args, size_t size)
 {
     uint32_t addr;
-    size_t size;
     int ret;
 
-    if (!args_addr || (!args && num_args != 0)) {
-        return -EINVAL;
-    }
-
-    size = (size_t)num_args * sizeof(*args);
-    if (num_args != 0 && size / sizeof(*args) != num_args) {
+    if (!args_addr || (!args && size != 0)) {
         return -EINVAL;
     }
 

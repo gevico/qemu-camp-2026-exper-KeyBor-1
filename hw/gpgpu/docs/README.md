@@ -7,6 +7,7 @@
 - [STRUCTURE.md](STRUCTURE.md): 目录结构和模块职责。
 - [ABI.md](ABI.md): launch ABI、kernel entry ABI、builtin register 地址模型。
 - [SIMT_EXECUTION_NOTES.md](SIMT_EXECUTION_NOTES.md): SIMT 执行模型、`threadIdx`/`blockIdx`/global index、当前串行模拟方式。
+- [FAQ.md](FAQ.md): 实现过程中出现过的关键疑问和结论。
 - [DESIGN_NOTES.md](DESIGN_NOTES.md): 阶段性设计记录。
 - [RUNTIME.md](RUNTIME.md): 最小 runtime API 和职责。
 - [BAREMETAL_PCI.md](BAREMETAL_PCI.md): QEMU `virt` 裸机 PCI/ECAM/BAR 说明。

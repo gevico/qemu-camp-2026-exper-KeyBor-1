@@ -16,7 +16,8 @@ hw/gpgpu/
 │       ├── gpgpu_core.h
 │       └── gpgpu_riscv.h
 ├── kernels/
-│   └── thread_add_kernel.c
+│   ├── thread_add_kernel.c
+│   └── relu_i32_kernel.c
 ├── baremetal/
 │   ├── Makefile
 │   ├── include/
@@ -35,6 +36,8 @@ hw/gpgpu/
 ├── runtime/
 │   ├── include/
 │   │   ├── gpgpu_runtime.h
+│   │   ├── gpgpu_tensor.h
+│   │   ├── gpgpu_nn.h
 │   │   └── gpgpu_freestanding.h
 │   └── src/
 │       └── gpgpu_runtime.c
@@ -47,6 +50,7 @@ hw/gpgpu/
     ├── ABI.md
     ├── DESIGN_NOTES.md
     ├── SIMT_EXECUTION_NOTES.md
+    ├── FAQ.md
     ├── STRUCTURE.md
     ├── RUNTIME.md
     ├── BAREMETAL_PCI.md
@@ -114,6 +118,7 @@ runtime/
 - kernel code 上传。
 - user args 打包。
 - launch MMIO 写入。
+- tensor/op/network descriptor 定义。
 
 当前 ABI 是：
 
@@ -152,7 +157,9 @@ baremetal/
 - `src/main.c`：GPGPU PCI/runtime/kernel smoke。
 - `src/uart_smoke.c`：单独验证 UART 和裸机入口。
 
-`kernels/thread_add_kernel.c` 是设备侧 C kernel。Makefile 会把它编译为 RV32 `.text`，再生成 `baremetal/build/thread_add_kernel.inc` 给 `baremetal/src/main.c` 上传。
+`kernels/thread_add_kernel.c` 和 `kernels/relu_i32_kernel.c` 是设备侧
+C kernel。Makefile 会把它们编译为 RV32 `.text`，再生成
+`baremetal/build/*_kernel.inc` 给 `baremetal/src/main.c` 上传。
 
 ## Device Kernels
 

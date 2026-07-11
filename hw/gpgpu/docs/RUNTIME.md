@@ -31,12 +31,29 @@ int gpgpu_read(GPGPURuntimeDevice *dev, uint32_t src, void *dst, size_t size);
 
 int gpgpu_upload_kernel(GPGPURuntimeDevice *dev, uint32_t *kernel_addr,
                         const uint32_t *code, size_t num_words);
-int gpgpu_pack_args(GPGPURuntimeDevice *dev, uint32_t *args_addr,
-                    const uint32_t *args, uint32_t num_args);
+int gpgpu_upload_args(GPGPURuntimeDevice *dev, uint32_t *args_addr,
+                      const void *args, size_t size);
 
 int gpgpu_launch(GPGPURuntimeDevice *dev, uint32_t kernel_addr,
                  uint32_t kernel_args, GPGPURuntimeDim3 grid,
                  GPGPURuntimeDim3 block);
+```
+
+CNN/tensor 相关公共结构定义在：
+
+```text
+runtime/include/gpgpu_tensor.h
+runtime/include/gpgpu_nn.h
+```
+
+其中：
+
+```text
+GPGPUTensorDesc = data VRAM offset + dtype + layout + shape + stride
+GPGPUConv2DArgs / GPGPUReluArgs / GPGPUMaxPool2DArgs / GPGPULinearArgs =
+  per-op kernel args layout
+GPGPUNodeDesc / GPGPUNetworkDesc =
+  host-side execution plan
 ```
 
 ## ABI Mapping
@@ -51,17 +68,25 @@ BLOCK_DIM   = block
 DISPATCH    = 1
 ```
 
-`gpgpu_upload_kernel()` and `gpgpu_pack_args()` allocate VRAM offsets using the same bump allocator. Kernel code, args, input tensors, and output tensors are all represented as 32-bit VRAM offsets.
+`gpgpu_upload_kernel()` and `gpgpu_upload_args()` allocate VRAM offsets using
+the same bump allocator. Kernel code, args, input tensors, weights, bias, and
+output tensors are all represented as 32-bit VRAM offsets.
 
-`gpgpu_pack_args()` writes only user args. Launch metadata such as grid and
-block dimensions is written by `gpgpu_launch()` to control registers, and
-kernel code reads it through the device builtin-register address space.
+`gpgpu_upload_args()` writes only the user-provided parameter blob. Launch
+metadata such as grid and block dimensions is written by `gpgpu_launch()` to
+control registers, and kernel code reads it through the device builtin-register
+address space.
+
+For CNN-style kernels, `kernel_args` should point to an op-specific args struct
+in VRAM. Tensor data, weights, bias, and output buffers are independent VRAM
+allocations; the args struct stores their descriptors and VRAM offsets.
 
 ## Limitations
 
 - Allocator is bump-only and does not support free.
 - All allocations are 16-byte aligned.
-- Kernel user args are packed as 32-bit words:
-  `user_args[i]` at `kernel_args + i * 4`.
+- `gpgpu_upload_args()` uploads the kernel parameter blob. Old-style
+  `uint32_t user_args[]` and CNN-style structs such as `GPGPUReluArgs` both
+  use this path.
 - `gpgpu_launch()` waits by polling `GLOBAL_STATUS.BUSY` and currently has no timeout.
 - Runtime register offsets are duplicated locally for now. They should move to a shared UAPI header when the runtime becomes a real external component.

@@ -221,6 +221,41 @@ user_args[3] = width
 user_args[4] = height
 ```
 
+对于 CNN-style op kernel，`kernel_args` 通常指向一个 op-specific args
+结构体，而不是简单的 word array。例如 conv2d：
+
+```text
+kernel_args -> GPGPUConv2DArgs
+```
+
+`GPGPUConv2DArgs` 中包含 input/weight/bias/output 的
+`GPGPUTensorDesc`。每个 tensor desc 的 `data` 字段是 VRAM offset，真正的
+tensor/weight/bias 数据放在独立 VRAM allocation 中。
+
+例如 ReLU：
+
+```text
+kernel_args -> GPGPUReluArgs
+GPGPUReluArgs.input.data  -> input tensor VRAM allocation
+GPGPUReluArgs.output.data -> output tensor VRAM allocation
+```
+
+device kernel 的类型解释由 `kernel_addr` 决定：ReLU kernel 把 `x10`
+解释为 `GPGPUReluArgs *`，Conv2D kernel 把 `x10` 解释为
+`GPGPUConv2DArgs *`。第一版不在 args struct 中加入统一的 op type 或
+magic header。
+
+第一版约定：
+
+```text
+activation layout = NCHW
+conv weight layout = OIHW
+linear weight layout = OI
+dtype = GPGPU_DTYPE_I32
+stride 单位 = element，不是 byte
+network descriptor = host-side execution plan，不放入 VRAM
+```
+
 ## 5. Address Model
 
 第一版 device 地址模型：
@@ -272,7 +307,7 @@ uint32_t gpgpu_malloc(size_t size);
 void gpgpu_write(uint32_t dst, const void *src, size_t size);
 void gpgpu_read(uint32_t src, void *dst, size_t size);
 uint32_t gpgpu_upload_kernel(const void *code, size_t size);
-uint32_t gpgpu_pack_args(const uint32_t *args, uint32_t num_args);
+uint32_t gpgpu_upload_args(const void *args, size_t size);
 void gpgpu_launch(uint32_t kernel_addr,
                   uint32_t kernel_args,
                   dim3 grid,
@@ -283,7 +318,7 @@ void gpgpu_launch(uint32_t kernel_addr,
 
 ```text
 gpgpu_upload_kernel() 使用 gpgpu_malloc() 分配 VRAM 并写入 kernel code
-gpgpu_pack_args() 使用 gpgpu_malloc() 分配 VRAM 并按 32-bit word 写入参数
+gpgpu_upload_args() 使用 gpgpu_malloc() 分配 VRAM 并写入参数 blob
 gpgpu_launch() 按 Launch ABI 写 MMIO 寄存器并触发 DISPATCH
 ```
 

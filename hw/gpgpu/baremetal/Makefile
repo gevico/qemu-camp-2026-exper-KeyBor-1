@@ -16,6 +16,7 @@ BIN := $(BUILD_DIR)/gpgpu-smoke.bin
 UART_TARGET := $(BUILD_DIR)/uart-smoke.elf
 UART_BIN := $(BUILD_DIR)/uart-smoke.bin
 THREAD_ADD_KERNEL_INC := $(BUILD_DIR)/thread_add_kernel.inc
+RELU_I32_KERNEL_INC := $(BUILD_DIR)/relu_i32_kernel.inc
 
 CFLAGS := -march=rv64imac -mabi=lp64 -mcmodel=medany
 CFLAGS += -Wall -Wextra -ffreestanding -fno-builtin -fno-common
@@ -24,6 +25,7 @@ CFLAGS += -I$(RUNTIME_DIR)/include
 KERNEL_CFLAGS := -march=rv32im -mabi=ilp32 -Wall -Wextra
 KERNEL_CFLAGS += -ffreestanding -fno-builtin -fno-common -fno-pic
 KERNEL_CFLAGS += -fno-asynchronous-unwind-tables -fno-unwind-tables -Os
+KERNEL_CFLAGS += -I$(RUNTIME_DIR)/include
 LDFLAGS := -nostdlib -T $(SCRIPT_DIR)/linker.ld
 
 OBJS := \
@@ -42,7 +44,7 @@ $(BUILD_DIR):
 $(BUILD_DIR)/start.o: $(SCRIPT_DIR)/start.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(THREAD_ADD_KERNEL_INC) | $(BUILD_DIR)
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(THREAD_ADD_KERNEL_INC) $(RELU_I32_KERNEL_INC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/thread_add_kernel.o: $(GPGPU_KERNEL_DIR)/thread_add_kernel.c | $(BUILD_DIR)
@@ -57,6 +59,21 @@ $(BUILD_DIR)/thread_add_kernel.dis: $(BUILD_DIR)/thread_add_kernel.o
 $(THREAD_ADD_KERNEL_INC): $(BUILD_DIR)/thread_add_kernel.bin $(BUILD_DIR)/thread_add_kernel.dis
 	printf 'static const uint32_t thread_add_kernel_code[] = {\n' > $@
 	od -An -v -tx4 $(BUILD_DIR)/thread_add_kernel.bin | \
+	    awk '{ for (i = 1; i <= NF; ++i) printf "    0x%s,\n", $$i }' >> $@
+	printf '};\n' >> $@
+
+$(BUILD_DIR)/relu_i32_kernel.o: $(GPGPU_KERNEL_DIR)/relu_i32_kernel.c | $(BUILD_DIR)
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/relu_i32_kernel.bin: $(BUILD_DIR)/relu_i32_kernel.o
+	$(OBJCOPY) -O binary -j .text $< $@
+
+$(BUILD_DIR)/relu_i32_kernel.dis: $(BUILD_DIR)/relu_i32_kernel.o
+	$(OBJDUMP) -dr $< > $@
+
+$(RELU_I32_KERNEL_INC): $(BUILD_DIR)/relu_i32_kernel.bin $(BUILD_DIR)/relu_i32_kernel.dis
+	printf 'static const uint32_t relu_i32_kernel_code[] = {\n' > $@
+	od -An -v -tx4 $(BUILD_DIR)/relu_i32_kernel.bin | \
 	    awk '{ for (i = 1; i <= NF; ++i) printf "    0x%s,\n", $$i }' >> $@
 	printf '};\n' >> $@
 
