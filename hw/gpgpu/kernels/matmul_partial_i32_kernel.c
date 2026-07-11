@@ -14,8 +14,8 @@ void _start(GPGPUMatmulPartialArgs *args)
     uint32_t k = ctrl[CTRL_THREAD_ID_X / sizeof(uint32_t)];
     uint32_t m = ctrl[CTRL_BLOCK_ID_X / sizeof(uint32_t)];
     uint32_t o = ctrl[CTRL_BLOCK_ID_Y / sizeof(uint32_t)];
-    uint32_t a_offset = m * args->a.stride_n + k * args->a.stride_c;
-    uint32_t b_offset = k * args->b.stride_n + o * args->b.stride_c;
+    uint32_t a_offset = m * args->k + k;
+    uint32_t b_offset = k * args->o + o;
     uint32_t partial_offset = (m * args->o + o) * args->k + k;
     int32_t *a = (int32_t *)(uintptr_t)args->a.data;
     int32_t *b = (int32_t *)(uintptr_t)args->b.data;

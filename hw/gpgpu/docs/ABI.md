@@ -311,6 +311,17 @@ block.x = K
 其中 `blockIdx.x` 表示 A/C 的行 `m`，`blockIdx.y` 表示 B/C 的列 `o`，
 `threadIdx.x` 表示归约维度 `k`。
 
+当前 matmul kernel 假设矩阵都是连续行主序：
+
+```text
+A[m][k] -> m * K + k
+B[k][o] -> k * O + o
+C[m][o] -> m * O + o
+```
+
+`GPGPUTensorDesc` 中的 stride 字段保留给后续 view/transpose/padding
+支持，第一版 matmul 不依赖 stride 计算 offset。
+
 device kernel 的类型解释由 `kernel_addr` 决定：ReLU kernel 把 `x10`
 解释为 `GPGPUReluArgs *`，Linear kernel 把 `x10` 解释为
 `GPGPULinearArgs *` / `GPGPULinearPartialArgs *` /

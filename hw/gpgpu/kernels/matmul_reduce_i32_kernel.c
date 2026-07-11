@@ -19,7 +19,7 @@ void _start(GPGPUMatmulReduceArgs *args)
     for (uint32_t k = 0; k < args->k; ++k) {
         acc += partial[(m * args->o + o) * args->k + k];
     }
-    c[m * args->c.stride_n + o * args->c.stride_c] = acc;
+    c[m * args->o + o] = acc;
 
     __asm__ volatile("ebreak");
     __builtin_unreachable();

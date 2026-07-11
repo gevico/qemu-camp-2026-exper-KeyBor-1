@@ -625,6 +625,10 @@ B[k][o] -> k * O + o
 C[m][o] -> m * O + o
 ```
 
+当前 matmul kernel 就按这些连续行主序公式计算 offset，没有使用
+`GPGPUTensorDesc.stride_*`。stride 字段先保留给后续更复杂的
+view/transpose/padding。
+
 所以 `MK/KO/MO` 不是硬件概念，也不是额外数据本身。它们只是约定：
 
 ```text
