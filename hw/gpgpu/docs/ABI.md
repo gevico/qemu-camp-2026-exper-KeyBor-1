@@ -147,7 +147,7 @@ sp = stack_base + (global_thread_id + 1) * GPGPU_STACK_SIZE_PER_THREAD
 ```
 
 RISC-V 栈向低地址增长，所以 `sp` 初始化到该 thread slot 的顶部。
-第一版 `GPGPU_STACK_SIZE_PER_THREAD = 4096`。这不是模拟真实 GPU 的物理
+第一版 `GPGPU_STACK_SIZE_PER_THREAD = 64`。这不是模拟真实 GPU 的物理
 栈分配策略，而是给 C 编译器生成的 RISC-V 栈访问提供一个 thread-private
 local memory 语义。
 

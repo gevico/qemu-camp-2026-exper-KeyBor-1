@@ -824,8 +824,8 @@ sw s0, 8(sp)
 ```text
 每次 kernel dispatch:
   total_threads = gridDim * blockDim
-  在 VRAM 顶部向下预留 total_threads * 4KB
-  每个逻辑 thread 分配一个固定 4KB stack slot
+  在 VRAM 顶部向下预留 total_threads * 64B
+  每个逻辑 thread 分配一个固定 64B stack slot
   lane 初始化时把 x2/sp 设置到自己的 stack slot 顶部
 ```
 
@@ -833,13 +833,19 @@ sw s0, 8(sp)
 
 ```text
 global_thread_id = block_linear_id * block_size + thread_id_in_block
-sp = stack_base + (global_thread_id + 1) * 4096
+sp = stack_base + (global_thread_id + 1) * 64
 ```
 
 这样做的好处是语义清楚：每个逻辑 thread 都有自己的 private stack，
 warp/lane 调度顺序不会导致局部变量互相覆盖。代价是内存开销较大，并且
 runtime 的普通 VRAM 分配目前还不知道这段 launch-time stack 区，后续要
 演进成更正式的 VRAM memory layout 或 command metadata。
+
+最初曾使用 4KB stack slot，适合教学但不适合 LeNet 这类有较多逻辑 thread
+的裸机 smoke。例如 conv2 lowering 的 partial matmul 可能有 240000 个逻辑
+thread，4KB/thread 会接近 1GB。当前 device kernels 的实际栈帧很小，
+所以先收敛到 64B/thread；后续更真实的做法是引入 kernel metadata 中的
+stack frame size，或者只为驻留 warp 分配 local stack。
 
 ## 24. RISC-V 编译器生成的 `sp` 为什么能和 lane 的栈连起来？
 
