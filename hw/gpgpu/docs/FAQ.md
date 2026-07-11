@@ -940,6 +940,34 @@ int32_value = round(real_value * 256)
 这样做的原因是当前 device kernel 已经支持 `int32` load/store 和乘加，
 不用先补完整浮点路径。
 
+这里的“量化”不是为了训练模型，而是为了让 PyTorch 里的 float32 权重和
+输入能在当前裸机 GPGPU kernel 上执行。PyTorch 原始推理大概是：
+
+```text
+float input
+float weight
+float bias
+float output
+```
+
+而当前 RV32 device kernel 路径主要支持：
+
+```text
+int32 load/store
+int32 multiply
+int32 accumulate
+```
+
+所以需要把 float 数值映射到整数域。Q8.8 的含义是用低 8 位表示小数：
+
+```text
+1.0   -> 256
+0.5   -> 128
+-0.25 -> -64
+```
+
+这样我们仍然可以用整数乘法模拟小数乘法。
+
 两个 Q8.8 数相乘时：
 
 ```text
@@ -965,3 +993,133 @@ output_q8_8 = (sum(input_q8_8 * weight_q8_8) >> 8) + bias_q8_8
 这个方案不是最高精度的量化方案，只是最容易和当前 RV32 int kernel 对齐。
 后续如果要提高精度，可以演进到 per-channel weight scale、rounding shift、
 saturation/clamp，以及真正的 int8 storage。
+
+当前实现采用非常直接的量化流程：
+
+```text
+float32 weight/bias/input
+  -> q = round(float32 * 256)
+  -> 存成 int32_t
+  -> kernel 中按 int32_t 做乘加
+  -> matmul reduce 阶段右移 8 位回到 Q8.8
+```
+
+需要注意两个限制：
+
+- 现在没有做 saturation，极端值可能溢出。
+- 现在没有做 rounding shift，`acc >> 8` 是直接截断。
+
+对 MNIST LeNet 这种小模型，第一版先追求链路跑通和语义清楚。
+
+## 26. SunnyHaze LeNet 的 PyTorch 权重是如何提取和使用的？
+
+SunnyHaze 仓库里的模型结构是固定的：
+
+```text
+layer1.0 = Conv2d(1, 6, kernel=5, padding=2)
+layer1.3 = Conv2d(6, 16, kernel=5)
+layer2.0 = Linear(16 * 5 * 5, 120)
+layer2.2 = Linear(120, 84)
+layer2.4 = Linear(84, 10)
+```
+
+PyTorch 保存的 `model.pt` 里有一个 `state_dict`。从逻辑上看，
+`state_dict` 就是“参数名 -> tensor”的映射：
+
+```text
+layer1.0.weight -> [6, 1, 5, 5]
+layer1.0.bias   -> [6]
+layer1.3.weight -> [16, 6, 5, 5]
+layer1.3.bias   -> [16]
+layer2.0.weight -> [120, 400]
+layer2.0.bias   -> [120]
+layer2.2.weight -> [84, 120]
+layer2.2.bias   -> [84]
+layer2.4.weight -> [10, 84]
+layer2.4.bias   -> [10]
+```
+
+PyTorch 正常加载时会按名字把这些 tensor 放回对应 layer：
+
+```python
+model.load_state_dict(state_dict)
+```
+
+我们裸机环境没有 PyTorch，也不需要 PyTorch 的模块对象。我们的导出脚本
+`tools/export_sunnyhaze_lenet.py` 直接读取 `model.pt` zip 里的 raw
+float32 storage。这个模型的 storage 顺序和 tensor 形状固定，对应关系是：
+
+```text
+archive/data/0 -> layer1.0.weight -> conv1_weight
+archive/data/1 -> layer1.0.bias   -> conv1_bias
+archive/data/2 -> layer1.3.weight -> conv2_weight
+archive/data/3 -> layer1.3.bias   -> conv2_bias
+archive/data/4 -> layer2.0.weight -> fc1_weight
+archive/data/5 -> layer2.0.bias   -> fc1_bias
+archive/data/6 -> layer2.2.weight -> fc2_weight
+archive/data/7 -> layer2.2.bias   -> fc2_bias
+archive/data/8 -> layer2.4.weight -> fc3_weight
+archive/data/9 -> layer2.4.bias   -> fc3_bias
+```
+
+导出时做两件事：
+
+```text
+1. 按 tensor 的 shape 读取连续 float32 数组
+2. 对每个 float 做 Q8.8 量化，写成 C 头文件里的 int32_t 数组
+```
+
+生成的文件是：
+
+```text
+assets/lenet/sunnyhaze_lenet_q8_weights.h
+```
+
+后续裸机加载时，不是按 PyTorch 的 layer object 加载，而是按我们自己的
+runtime 规则上传到 VRAM：
+
+```text
+sunnyhaze_lenet_conv1_weight_q8 -> gpgpu_write 到 VRAM
+sunnyhaze_lenet_conv1_bias_q8   -> gpgpu_write 到 VRAM
+...
+```
+
+然后把 VRAM offset 填进 tensor descriptor：
+
+```text
+weight.data = conv1_weight_addr
+bias.data   = conv1_bias_addr
+```
+
+kernel 计算时确实是根据维度和 index 取权重值。例如 conv weight 是 OIHW：
+
+```text
+weight[oc][ic][kh][kw]
+offset = oc * (IC * KH * KW)
+       + ic * (KH * KW)
+       + kh * KW
+       + kw
+```
+
+在 lowering 路径里，我们先用 `oihw_to_ko_i32` 把权重从 OIHW 转成 KO：
+
+```text
+k = ic * KH * KW + kh * KW + kw
+o = oc
+B[k][o] = weight[oc][ic][kh][kw]
+```
+
+然后 matmul 使用：
+
+```text
+C[m][o] = sum_k A[m][k] * B[k][o]
+```
+
+所以可以这样理解：
+
+```text
+PyTorch 按 layer 名字管理权重；
+我们导出后按 tensor 名字和固定 shape 管理权重；
+runtime 上传后按 VRAM offset 管理权重；
+kernel 执行时按 layout/维度公式计算 offset，取出具体权重值参与乘加。
+```
