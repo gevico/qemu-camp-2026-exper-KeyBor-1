@@ -11,6 +11,9 @@
 *.pid
 *.sock
 
+# Downloaded third-party model cache; regenerate derived headers with tools/.
+/assets/lenet/sunnyhaze_model.pt
+
 # Editor and OS noise
 .DS_Store
 *~
