@@ -250,10 +250,35 @@ GPGPULinearArgs.bias.data   -> 1D bias tensor, length out_features
 GPGPULinearArgs.output.data -> 1D output tensor, length out_features
 ```
 
+并行 Linear 第一版拆成两个 kernel：
+
+```text
+kernel_args -> GPGPULinearPartialArgs
+GPGPULinearPartialArgs.input.data   -> 1D input tensor
+GPGPULinearPartialArgs.weight.data  -> OI weight tensor
+GPGPULinearPartialArgs.partial.data -> OI partial tensor
+
+kernel_args -> GPGPULinearReduceArgs
+GPGPULinearReduceArgs.partial.data -> OI partial tensor
+GPGPULinearReduceArgs.bias.data    -> 1D bias tensor
+GPGPULinearReduceArgs.output.data  -> 1D output tensor
+```
+
+`linear_partial_i32` 使用：
+
+```text
+grid.x  = out_features
+block.x = in_features
+```
+
+其中 `blockIdx.x` 表示输出行，`threadIdx.x` 表示输入列。
+
 device kernel 的类型解释由 `kernel_addr` 决定：ReLU kernel 把 `x10`
 解释为 `GPGPUReluArgs *`，Linear kernel 把 `x10` 解释为
-`GPGPULinearArgs *`，Conv2D kernel 把 `x10` 解释为 `GPGPUConv2DArgs *`。
-第一版不在 args struct 中加入统一的 op type 或 magic header。
+`GPGPULinearArgs *` / `GPGPULinearPartialArgs *` /
+`GPGPULinearReduceArgs *`，Conv2D kernel 把 `x10` 解释为
+`GPGPUConv2DArgs *`。第一版不在 args struct 中加入统一的 op type 或
+magic header。
 
 第一版约定：
 

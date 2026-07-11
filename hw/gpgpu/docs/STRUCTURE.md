@@ -18,7 +18,9 @@ hw/gpgpu/
 ├── kernels/
 │   ├── thread_add_kernel.c
 │   ├── relu_i32_kernel.c
-│   └── linear_i32_kernel.c
+│   ├── linear_i32_kernel.c
+│   ├── linear_partial_i32_kernel.c
+│   └── linear_reduce_i32_kernel.c
 ├── baremetal/
 │   ├── Makefile
 │   ├── include/
@@ -158,9 +160,10 @@ baremetal/
 - `src/main.c`：GPGPU PCI/runtime/kernel smoke。
 - `src/uart_smoke.c`：单独验证 UART 和裸机入口。
 
-`kernels/thread_add_kernel.c`、`kernels/relu_i32_kernel.c` 和
-`kernels/linear_i32_kernel.c` 是设备侧 C kernel。Makefile 会把它们
-编译为 RV32 `.text`，再生成 `baremetal/build/*_kernel.inc` 给
+`kernels/thread_add_kernel.c`、`kernels/relu_i32_kernel.c`、
+`kernels/linear_i32_kernel.c`、`kernels/linear_partial_i32_kernel.c` 和
+`kernels/linear_reduce_i32_kernel.c` 是设备侧 C kernel。Makefile 会把
+它们编译为 RV32 `.text`，再生成 `baremetal/build/*_kernel.inc` 给
 `baremetal/src/main.c` 上传。
 
 ## Device Kernels

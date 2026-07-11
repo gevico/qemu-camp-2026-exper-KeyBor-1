@@ -514,3 +514,70 @@ command buffer
 network descriptor in VRAM
 更复杂的 runtime graph executor
 ```
+
+## 19. Linear 为什么先做 exact-cover，再做两阶段并行化？
+
+当前有两个 linear smoke，用来表达两个不同阶段。
+
+第一阶段是 exact-cover dot product：
+
+```text
+out_features = 3
+launch threads = 3
+
+thread0 -> output[0]
+thread1 -> output[1]
+thread2 -> output[2]
+```
+
+每个 thread 串行遍历 `in_features`：
+
+```text
+output[o] = bias[o] + sum_i input[i] * weight[o][i]
+```
+
+这个阶段不启动多余 thread，也不需要 `out_feature < out_features`
+的 guard。它验证的是最小覆盖 launch：runtime 精确下发需要的 thread
+数量，kernel 直接执行对应输出。
+
+第二阶段把乘法部分全并行化：
+
+```text
+grid.x  = out_features
+block.x = in_features
+
+blockIdx.x  -> out_feature
+threadIdx.x -> in_feature
+```
+
+这样每个 thread 只计算一个乘法：
+
+```text
+partial[o][i] = input[i] * weight[o][i]
+```
+
+对于当前例子：
+
+```text
+out_features * in_features = 3 * 4 = 12
+```
+
+所以 partial kernel 会启动 12 个 thread 覆盖 12 次乘法。
+
+但完整 Linear 还需要把每一行 partial 加起来：
+
+```text
+output[o] = bias[o] + partial[o][0] + ... + partial[o][in_features - 1]
+```
+
+当前模拟器还没有 shared memory、barrier、atomic add 或 warp reduction，
+所以不能在一个 kernel 中安全完成跨 thread 归约。第一版并行 linear
+因此拆成两个 launch：
+
+```text
+launch linear_partial_i32
+launch linear_reduce_i32
+```
+
+两次 launch 之间的边界就是全局同步点。后续加入 block 内同步、atomic
+或 warp-level reduction 后，可以把 reduce 阶段融合回单 kernel。

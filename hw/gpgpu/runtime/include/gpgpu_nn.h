@@ -20,10 +20,12 @@ extern "C" {
 #endif
 
 typedef enum GPGPUOpType {
-    GPGPU_OP_CONV2D     = 0,
-    GPGPU_OP_RELU       = 1,
-    GPGPU_OP_MAXPOOL2D  = 2,
-    GPGPU_OP_LINEAR     = 3,
+    GPGPU_OP_CONV2D         = 0,
+    GPGPU_OP_RELU           = 1,
+    GPGPU_OP_MAXPOOL2D      = 2,
+    GPGPU_OP_LINEAR         = 3,
+    GPGPU_OP_LINEAR_PARTIAL = 4,
+    GPGPU_OP_LINEAR_REDUCE  = 5,
 } GPGPUOpType;
 
 typedef struct GPGPUConv2DArgs {
@@ -64,6 +66,22 @@ typedef struct GPGPULinearArgs {
     uint32_t in_features;
     uint32_t out_features;
 } GPGPULinearArgs;
+
+typedef struct GPGPULinearPartialArgs {
+    GPGPUTensorDesc input;
+    GPGPUTensorDesc weight;   /* Weight matrix, OI: [out_features, in_features]. */
+    GPGPUTensorDesc partial;  /* Partial products, OI: [out_features, in_features]. */
+    uint32_t in_features;
+    uint32_t out_features;
+} GPGPULinearPartialArgs;
+
+typedef struct GPGPULinearReduceArgs {
+    GPGPUTensorDesc partial;  /* Partial products, OI: [out_features, in_features]. */
+    GPGPUTensorDesc bias;
+    GPGPUTensorDesc output;
+    uint32_t in_features;
+    uint32_t out_features;
+} GPGPULinearReduceArgs;
 
 typedef struct GPGPUNodeDesc {
     uint32_t op_type;       /* GPGPUOpType */
