@@ -119,6 +119,7 @@ pc = kernel_addr
 
 ```text
 x0  = 0
+x2  = 当前逻辑 thread 的私有栈顶
 x10 = kernel_args
 其他 GPR 初始为 0
 FPR 初始为 0
@@ -126,6 +127,29 @@ FPR 初始为 0
 
 `x10` 采用 RISC-V ABI 中 `a0` 的编号，用作 kernel 用户参数区入口。
 它直接指向 `user_args[0]`，不包含 launch metadata header。
+
+`x2` 采用 RISC-V ABI 中 `sp` 的编号。当前模拟器在每次 dispatch 时从
+VRAM 顶部向下预留一段 per-thread stack 区：
+
+```text
+total_threads = gridDim.x * gridDim.y * gridDim.z *
+                blockDim.x * blockDim.y * blockDim.z
+
+stack_total_size = total_threads * GPGPU_STACK_SIZE_PER_THREAD
+stack_base       = vram_size - stack_total_size
+```
+
+每个逻辑 thread 获得一个固定大小 stack slot：
+
+```text
+global_thread_id = block_linear_id * block_size + thread_linear_id_in_block
+sp = stack_base + (global_thread_id + 1) * GPGPU_STACK_SIZE_PER_THREAD
+```
+
+RISC-V 栈向低地址增长，所以 `sp` 初始化到该 thread slot 的顶部。
+第一版 `GPGPU_STACK_SIZE_PER_THREAD = 4096`。这不是模拟真实 GPU 的物理
+栈分配策略，而是给 C 编译器生成的 RISC-V 栈访问提供一个 thread-private
+local memory 语义。
 
 kernel 可以从 `x10` 读取用户参数：
 

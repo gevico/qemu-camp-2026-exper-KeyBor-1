@@ -169,8 +169,8 @@ baremetal/
 `kernels/linear_i32_kernel.c`、`kernels/linear_partial_i32_kernel.c` 和
 `kernels/linear_reduce_i32_kernel.c`、`kernels/matmul_partial_i32_kernel.c`
 和 `kernels/matmul_reduce_i32_kernel.c`、`kernels/im2col_i32_kernel.c`、
-`kernels/oihw_to_ko_i32_kernel.c`、`kernels/maxpool_i32_kernel.c` 是设备侧
-C kernel。Makefile 会把它们编译为 RV32 `.text`，再生成
+`kernels/oihw_to_ko_i32_kernel.c`、`kernels/maxpool_i32_kernel.c`、
+`kernels/stack_smoke_kernel.c` 是设备侧 C kernel。Makefile 会把它们编译为 RV32 `.text`，再生成
 `baremetal/build/*_kernel.inc` 给 `baremetal/src/main.c` 上传。
 
 ## Device Kernels

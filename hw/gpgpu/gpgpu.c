@@ -167,17 +167,40 @@ static void gpgpu_ctrl_update_status(GPGPUState *s)
 
 static void gpgpu_dispatch_kernel(GPGPUState *s)
 {
-    bool is_illegal_param = ((s->kernel.kernel_addr > GPGPU_DEFAULT_VRAM_SIZE) || (s->kernel.kernel_args > GPGPU_DEFAULT_VRAM_SIZE) || ((s->kernel.grid_dim[0] <= 0) || (s->kernel.grid_dim[1] <= 0) || (s->kernel.grid_dim[2] <= 0)) ||
+    bool is_illegal_param = ((s->kernel.kernel_addr >= s->vram_size) || (s->kernel.kernel_args >= s->vram_size) || ((s->kernel.grid_dim[0] <= 0) || (s->kernel.grid_dim[1] <= 0) || (s->kernel.grid_dim[2] <= 0)) ||
                              ((s->kernel.block_dim[0] <= 0) || (s->kernel.block_dim[1] <= 0) || (s->kernel.block_dim[2] <= 0)));
     if(!(s->global_ctrl & GPGPU_CTRL_ENABLE) || (s->global_status & GPGPU_STATUS_BUSY) || is_illegal_param) {
         s->global_status |= GPGPU_STATUS_ERROR;
         return;
     }
-    s->global_status |= GPGPU_STATUS_BUSY;
 
     // uint32_t grid_size = s->kernel.grid_dim[0] * s->kernel.grid_dim[1] * s->kernel.grid_dim[2];
     // 一个block中有多少个线程
-    uint32_t block_size = s->kernel.block_dim[0] * s->kernel.block_dim[1] * s->kernel.block_dim[2];
+    uint64_t grid_size = (uint64_t)s->kernel.grid_dim[0] *
+                         s->kernel.grid_dim[1] *
+                         s->kernel.grid_dim[2];
+    uint64_t block_size_64 = (uint64_t)s->kernel.block_dim[0] *
+                             s->kernel.block_dim[1] *
+                             s->kernel.block_dim[2];
+    uint64_t total_threads = grid_size * block_size_64;
+    uint64_t stack_total_size = total_threads * GPGPU_STACK_SIZE_PER_THREAD;
+    uint32_t block_size;
+    uint32_t stack_base;
+
+    if (block_size_64 == 0 || block_size_64 > UINT32_MAX ||
+        total_threads == 0 ||
+        stack_total_size > s->vram_size ||
+        s->vram_size - stack_total_size > UINT32_MAX) {
+        s->error_status |= GPGPU_ERR_VRAM_FAULT;
+        s->global_status |= GPGPU_STATUS_ERROR;
+        return;
+    }
+
+    block_size = block_size_64;
+    stack_base = s->vram_size - stack_total_size;
+    stack_base &= ~(GPGPU_STACK_ALIGN - 1);
+
+    s->global_status |= GPGPU_STATUS_BUSY;
     //根据warpsize切分warp个数
     uint32_t warp_num = (block_size + (s->warp_size - 1)) / s->warp_size;
     for(int i = 0; i < s->kernel.grid_dim[0]; ++i) {
@@ -196,8 +219,13 @@ static void gpgpu_dispatch_kernel(GPGPUState *s)
                                 s->kernel.kernel_args,
                                 thread_id_base, block_id,
                                 thread_num,
-                                m, block_id_linear);
-                    gpgpu_core_exec_warp(s, &warp, 10);
+                                m, block_id_linear,
+                                block_size, stack_base,
+                                GPGPU_STACK_SIZE_PER_THREAD);
+                    if (gpgpu_core_exec_warp(s, &warp, 10) < 0) {
+                        s->global_status &= ~GPGPU_STATUS_BUSY;
+                        return;
+                    }
                 }
             }
         }

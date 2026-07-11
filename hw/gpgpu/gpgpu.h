@@ -58,6 +58,8 @@ OBJECT_DECLARE_SIMPLE_TYPE(GPGPUState, GPGPU)
 #define GPGPU_DEFAULT_WARPS_PER_CU  4       /* 每个 CU 的 warp 数量 */
 #define GPGPU_DEFAULT_WARP_SIZE     32      /* 每个 warp 的线程数 */
 #define GPGPU_DEFAULT_VRAM_SIZE     (64 * 1024 * 1024)  /* 默认显存大小 */
+#define GPGPU_STACK_SIZE_PER_THREAD 4096    /* 每个逻辑线程的私有栈大小 */
+#define GPGPU_STACK_ALIGN           16      /* RISC-V ABI 栈对齐 */
 
 /*
  * ============================================================================

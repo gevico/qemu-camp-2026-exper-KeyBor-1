@@ -134,7 +134,9 @@ void gpgpu_core_init_warp(GPGPUWarp *warp, uint32_t pc,
                           uint32_t kernel_args,
                           uint32_t thread_id_base, const uint32_t block_id[3],
                           uint32_t num_threads,
-                          uint32_t warp_id, uint32_t block_id_linear);
+                          uint32_t warp_id, uint32_t block_id_linear,
+                          uint32_t block_size, uint32_t stack_base,
+                          uint32_t stack_size_per_thread);
 
 /**
  * gpgpu_core_exec_warp - 执行一个 warp 直到完成

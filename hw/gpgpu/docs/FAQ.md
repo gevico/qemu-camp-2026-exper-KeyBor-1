@@ -795,6 +795,48 @@ output[n][c][oh][ow] =
 所以第一版 `maxpool_i32` 直接让一个 thread 负责一个 output element，
 在窗口内部串行扫描。
 
-注意：device kernel 当前没有初始化有效栈指针，kernel 代码应避免让编译器
-生成栈访问。`maxpool_i32` 因此保持实现简单，避免过多局部变量导致保存
-callee-saved 寄存器。
+## 23. 真实 GPU 有栈吗？为什么我们的 kernel 之前不能用栈？
+
+真实 GPU 不是简单地“没有栈”。更准确的说法是：GPU 编程模型给每个
+thread 提供 private/local storage 语义。局部变量通常优先放进寄存器；
+当寄存器不够、局部数组太大、发生 spill、函数调用需要调用帧时，编译器和
+runtime/硬件会把这些内容映射到该 thread 私有的 local memory。
+
+这不等于每个 lane 永久绑定一大块物理 SRAM，也不等于每次执行都像 CPU
+程序一样 `malloc/free` 一段栈。真实实现通常由编译器 metadata、runtime
+launch 配置、寄存器文件、local memory 和缓存共同完成。
+
+我们之前不能用栈，是因为 device kernel 用 `riscv64-unknown-elf-gcc`
+生成 RISC-V 代码。只要编译器生成：
+
+```asm
+addi sp, sp, -16
+sw ra, 12(sp)
+sw s0, 8(sp)
+```
+
+解释器就会按普通 RISC-V 语义访问 `x2/sp` 指向的地址。但当时每个 lane 的
+`sp` 初始值是 0，没有合法的 thread-private 栈区，所以写栈会落到非法或
+错误的 VRAM 地址。
+
+当前采用的简化模型是：
+
+```text
+每次 kernel dispatch:
+  total_threads = gridDim * blockDim
+  在 VRAM 顶部向下预留 total_threads * 4KB
+  每个逻辑 thread 分配一个固定 4KB stack slot
+  lane 初始化时把 x2/sp 设置到自己的 stack slot 顶部
+```
+
+也就是：
+
+```text
+global_thread_id = block_linear_id * block_size + thread_id_in_block
+sp = stack_base + (global_thread_id + 1) * 4096
+```
+
+这样做的好处是语义清楚：每个逻辑 thread 都有自己的 private stack，
+warp/lane 调度顺序不会导致局部变量互相覆盖。代价是内存开销较大，并且
+runtime 的普通 VRAM 分配目前还不知道这段 launch-time stack 区，后续要
+演进成更正式的 VRAM memory layout 或 command metadata。

@@ -22,12 +22,19 @@ void gpgpu_core_init_warp(GPGPUWarp *warp, uint32_t pc,
                           uint32_t kernel_args,
                           uint32_t thread_id_base, const uint32_t block_id[3],
                           uint32_t num_threads,
-                          uint32_t warp_id, uint32_t block_id_linear)
+                          uint32_t warp_id, uint32_t block_id_linear,
+                          uint32_t block_size, uint32_t stack_base,
+                          uint32_t stack_size_per_thread)
 {
     warp->thread_id_base = thread_id_base;
     memcpy(warp->block_id, block_id, sizeof(warp->block_id));
     warp->warp_id = warp_id;
     for (int i = 0; i < num_threads; ++i) {
+        uint32_t global_thread_id = block_id_linear * block_size +
+                                    thread_id_base + i;
+        uint32_t stack_top = stack_base +
+                             (global_thread_id + 1) * stack_size_per_thread;
+
         warp->lanes[i] = (GPGPULane){
             .gpr = {{0}},
             .fpr = {{0}},
@@ -37,6 +44,7 @@ void gpgpu_core_init_warp(GPGPUWarp *warp, uint32_t pc,
             .fp_status = {0},
             .active = 1
         };
+        warp->lanes[i].gpr[2].u32 = stack_top;
         warp->lanes[i].gpr[10].u32 = kernel_args;
     }
 }

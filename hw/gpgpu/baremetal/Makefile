@@ -16,6 +16,7 @@ BIN := $(BUILD_DIR)/gpgpu-smoke.bin
 UART_TARGET := $(BUILD_DIR)/uart-smoke.elf
 UART_BIN := $(BUILD_DIR)/uart-smoke.bin
 THREAD_ADD_KERNEL_INC := $(BUILD_DIR)/thread_add_kernel.inc
+STACK_SMOKE_KERNEL_INC := $(BUILD_DIR)/stack_smoke_kernel.inc
 RELU_I32_KERNEL_INC := $(BUILD_DIR)/relu_i32_kernel.inc
 LINEAR_I32_KERNEL_INC := $(BUILD_DIR)/linear_i32_kernel.inc
 LINEAR_PARTIAL_I32_KERNEL_INC := $(BUILD_DIR)/linear_partial_i32_kernel.inc
@@ -52,7 +53,7 @@ $(BUILD_DIR):
 $(BUILD_DIR)/start.o: $(SCRIPT_DIR)/start.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(THREAD_ADD_KERNEL_INC) $(RELU_I32_KERNEL_INC) $(LINEAR_I32_KERNEL_INC) $(LINEAR_PARTIAL_I32_KERNEL_INC) $(LINEAR_REDUCE_I32_KERNEL_INC) $(MATMUL_PARTIAL_I32_KERNEL_INC) $(MATMUL_REDUCE_I32_KERNEL_INC) $(IM2COL_I32_KERNEL_INC) $(OIHW_TO_KO_I32_KERNEL_INC) $(MAXPOOL_I32_KERNEL_INC) | $(BUILD_DIR)
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(THREAD_ADD_KERNEL_INC) $(STACK_SMOKE_KERNEL_INC) $(RELU_I32_KERNEL_INC) $(LINEAR_I32_KERNEL_INC) $(LINEAR_PARTIAL_I32_KERNEL_INC) $(LINEAR_REDUCE_I32_KERNEL_INC) $(MATMUL_PARTIAL_I32_KERNEL_INC) $(MATMUL_REDUCE_I32_KERNEL_INC) $(IM2COL_I32_KERNEL_INC) $(OIHW_TO_KO_I32_KERNEL_INC) $(MAXPOOL_I32_KERNEL_INC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/thread_add_kernel.o: $(GPGPU_KERNEL_DIR)/thread_add_kernel.c | $(BUILD_DIR)
@@ -67,6 +68,21 @@ $(BUILD_DIR)/thread_add_kernel.dis: $(BUILD_DIR)/thread_add_kernel.o
 $(THREAD_ADD_KERNEL_INC): $(BUILD_DIR)/thread_add_kernel.bin $(BUILD_DIR)/thread_add_kernel.dis
 	printf 'static const uint32_t thread_add_kernel_code[] = {\n' > $@
 	od -An -v -tx4 $(BUILD_DIR)/thread_add_kernel.bin | \
+	    awk '{ for (i = 1; i <= NF; ++i) printf "    0x%s,\n", $$i }' >> $@
+	printf '};\n' >> $@
+
+$(BUILD_DIR)/stack_smoke_kernel.o: $(GPGPU_KERNEL_DIR)/stack_smoke_kernel.c | $(BUILD_DIR)
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/stack_smoke_kernel.bin: $(BUILD_DIR)/stack_smoke_kernel.o
+	$(OBJCOPY) -O binary -j .text $< $@
+
+$(BUILD_DIR)/stack_smoke_kernel.dis: $(BUILD_DIR)/stack_smoke_kernel.o
+	$(OBJDUMP) -dr $< > $@
+
+$(STACK_SMOKE_KERNEL_INC): $(BUILD_DIR)/stack_smoke_kernel.bin $(BUILD_DIR)/stack_smoke_kernel.dis
+	printf 'static const uint32_t stack_smoke_kernel_code[] = {\n' > $@
+	od -An -v -tx4 $(BUILD_DIR)/stack_smoke_kernel.bin | \
 	    awk '{ for (i = 1; i <= NF; ++i) printf "    0x%s,\n", $$i }' >> $@
 	printf '};\n' >> $@
 
