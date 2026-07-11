@@ -30,6 +30,7 @@ typedef enum GPGPUOpType {
     GPGPU_OP_MATMUL_REDUCE  = 7,
     GPGPU_OP_IM2COL         = 8,
     GPGPU_OP_OIHW_TO_KO     = 9,
+    GPGPU_OP_MO_TO_NCHW     = 10,
 } GPGPUOpType;
 
 typedef struct GPGPUConv2DArgs {
@@ -128,6 +129,15 @@ typedef struct GPGPUOihwToKoArgs {
     uint32_t kernel_h;
     uint32_t kernel_w;
 } GPGPUOihwToKoArgs;
+
+typedef struct GPGPUMoToNchwArgs {
+    GPGPUTensorDesc input;   /* MO matrix: [n * h * w, c]. */
+    GPGPUTensorDesc output;  /* NCHW tensor. */
+    uint32_t n;
+    uint32_t c;
+    uint32_t h;
+    uint32_t w;
+} GPGPUMoToNchwArgs;
 
 typedef struct GPGPUNodeDesc {
     uint32_t op_type;       /* GPGPUOpType */

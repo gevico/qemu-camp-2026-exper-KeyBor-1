@@ -25,6 +25,7 @@ MATMUL_PARTIAL_I32_KERNEL_INC := $(BUILD_DIR)/matmul_partial_i32_kernel.inc
 MATMUL_REDUCE_I32_KERNEL_INC := $(BUILD_DIR)/matmul_reduce_i32_kernel.inc
 IM2COL_I32_KERNEL_INC := $(BUILD_DIR)/im2col_i32_kernel.inc
 OIHW_TO_KO_I32_KERNEL_INC := $(BUILD_DIR)/oihw_to_ko_i32_kernel.inc
+MO_TO_NCHW_I32_KERNEL_INC := $(BUILD_DIR)/mo_to_nchw_i32_kernel.inc
 MAXPOOL_I32_KERNEL_INC := $(BUILD_DIR)/maxpool_i32_kernel.inc
 
 CFLAGS := -march=rv64imac -mabi=lp64 -mcmodel=medany
@@ -53,7 +54,7 @@ $(BUILD_DIR):
 $(BUILD_DIR)/start.o: $(SCRIPT_DIR)/start.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(THREAD_ADD_KERNEL_INC) $(STACK_SMOKE_KERNEL_INC) $(RELU_I32_KERNEL_INC) $(LINEAR_I32_KERNEL_INC) $(LINEAR_PARTIAL_I32_KERNEL_INC) $(LINEAR_REDUCE_I32_KERNEL_INC) $(MATMUL_PARTIAL_I32_KERNEL_INC) $(MATMUL_REDUCE_I32_KERNEL_INC) $(IM2COL_I32_KERNEL_INC) $(OIHW_TO_KO_I32_KERNEL_INC) $(MAXPOOL_I32_KERNEL_INC) | $(BUILD_DIR)
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(THREAD_ADD_KERNEL_INC) $(STACK_SMOKE_KERNEL_INC) $(RELU_I32_KERNEL_INC) $(LINEAR_I32_KERNEL_INC) $(LINEAR_PARTIAL_I32_KERNEL_INC) $(LINEAR_REDUCE_I32_KERNEL_INC) $(MATMUL_PARTIAL_I32_KERNEL_INC) $(MATMUL_REDUCE_I32_KERNEL_INC) $(IM2COL_I32_KERNEL_INC) $(OIHW_TO_KO_I32_KERNEL_INC) $(MO_TO_NCHW_I32_KERNEL_INC) $(MAXPOOL_I32_KERNEL_INC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/thread_add_kernel.o: $(GPGPU_KERNEL_DIR)/thread_add_kernel.c | $(BUILD_DIR)
@@ -203,6 +204,21 @@ $(BUILD_DIR)/oihw_to_ko_i32_kernel.dis: $(BUILD_DIR)/oihw_to_ko_i32_kernel.o
 $(OIHW_TO_KO_I32_KERNEL_INC): $(BUILD_DIR)/oihw_to_ko_i32_kernel.bin $(BUILD_DIR)/oihw_to_ko_i32_kernel.dis
 	printf 'static const uint32_t oihw_to_ko_i32_kernel_code[] = {\n' > $@
 	od -An -v -tx4 $(BUILD_DIR)/oihw_to_ko_i32_kernel.bin | \
+	    awk '{ for (i = 1; i <= NF; ++i) printf "    0x%s,\n", $$i }' >> $@
+	printf '};\n' >> $@
+
+$(BUILD_DIR)/mo_to_nchw_i32_kernel.o: $(GPGPU_KERNEL_DIR)/mo_to_nchw_i32_kernel.c | $(BUILD_DIR)
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/mo_to_nchw_i32_kernel.bin: $(BUILD_DIR)/mo_to_nchw_i32_kernel.o
+	$(OBJCOPY) -O binary -j .text $< $@
+
+$(BUILD_DIR)/mo_to_nchw_i32_kernel.dis: $(BUILD_DIR)/mo_to_nchw_i32_kernel.o
+	$(OBJDUMP) -dr $< > $@
+
+$(MO_TO_NCHW_I32_KERNEL_INC): $(BUILD_DIR)/mo_to_nchw_i32_kernel.bin $(BUILD_DIR)/mo_to_nchw_i32_kernel.dis
+	printf 'static const uint32_t mo_to_nchw_i32_kernel_code[] = {\n' > $@
+	od -An -v -tx4 $(BUILD_DIR)/mo_to_nchw_i32_kernel.bin | \
 	    awk '{ for (i = 1; i <= NF; ++i) printf "    0x%s,\n", $$i }' >> $@
 	printf '};\n' >> $@
 

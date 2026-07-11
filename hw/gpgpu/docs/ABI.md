@@ -372,6 +372,9 @@ oihw_to_ko_i32:
 
 matmul_partial_i32 + matmul_reduce_i32:
   A MK * B KO -> C MO
+
+mo_to_nchw_i32:
+  C MO -> output NCHW
 ```
 
 其中：
@@ -391,6 +394,19 @@ iw = ow * stride_w + kw - pad_w
 
 当 `(ih, iw)` 落在输入边界外时，对应 lowered matrix 元素写 0。
 
+`mo_to_nchw_i32` 用于把 lowered conv 的 matmul 输出接回 NCHW 后续算子。
+matmul 输出的内存顺序是：
+
+```text
+MO[m][oc], m = n * H * W + h * W + w
+```
+
+转换后写入：
+
+```text
+NCHW[n][oc][h][w]
+```
+
 第一版 maxpool2d 使用 direct kernel：
 
 ```text
@@ -405,7 +421,8 @@ device kernel 的类型解释由 `kernel_addr` 决定：ReLU kernel 把 `x10`
 `GPGPULinearReduceArgs *`，Matmul kernel 把 `x10` 解释为
 `GPGPUMatmulPartialArgs *` / `GPGPUMatmulReduceArgs *`，Im2Col kernel
 把 `x10` 解释为 `GPGPUIm2ColArgs *`，OIHW-to-KO kernel 把 `x10` 解释为
-`GPGPUOihwToKoArgs *`，MaxPool kernel 把 `x10` 解释为
+`GPGPUOihwToKoArgs *`，MO-to-NCHW kernel 把 `x10` 解释为
+`GPGPUMoToNchwArgs *`，MaxPool kernel 把 `x10` 解释为
 `GPGPUMaxPool2DArgs *`。第一版不在 args struct 中加入统一的 op type 或
 magic header。
 

@@ -56,6 +56,8 @@ GPGPUMatmulPartialArgs / GPGPUMatmulReduceArgs =
   two-stage matrix multiply args layout
 GPGPUIm2ColArgs / GPGPUOihwToKoArgs =
   conv lowering args layout
+GPGPUMoToNchwArgs =
+  layout conversion args from matmul MO output to NCHW tensor
 GPGPUNodeDesc / GPGPUNetworkDesc =
   host-side execution plan
 ```
