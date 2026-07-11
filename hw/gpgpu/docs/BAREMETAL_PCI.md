@@ -1,6 +1,6 @@
 # Bare-Metal PCI Setup
 
-本文档解释 `gpgpu_pci.c` 做的事情，以及裸机程序如何通过 PCI BAR 访问 GPGPU VRAM。
+本文档解释 `baremetal/drivers/src/gpgpu_pci.c` 做的事情，以及裸机程序如何通过 PCI BAR 访问 GPGPU VRAM。
 
 ## 1. 两类地址
 

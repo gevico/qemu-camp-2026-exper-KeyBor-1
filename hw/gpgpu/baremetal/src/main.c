@@ -1,5 +1,5 @@
 #include "qemu_virt_platform.h"
-#include "../runtime/gpgpu_pci.h"
+#include "gpgpu_pci.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -119,7 +119,7 @@ int main(void)
     uint32_t result = 0;
     uint32_t sentinel = 0xdeadbeef;
     uint32_t args[2];
-    uint32_t thread_args[1];
+    uint32_t thread_args[3];
     uint32_t thread_results[64];
     uint32_t thread_out_addr;
     uint32_t thread_kernel_addr;
@@ -251,6 +251,8 @@ int main(void)
         return ret;
     }
     thread_args[0] = thread_out_addr;
+    thread_args[1] = 1;
+    thread_args[2] = 1;
 
     ret = gpgpu_upload_kernel(&dev, &thread_kernel_addr,
                               thread_add_kernel_code,

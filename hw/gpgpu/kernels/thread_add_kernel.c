@@ -20,6 +20,8 @@ static uint32_t ctrl_read32(uint32_t offset)
 void _start(uint32_t *args)
 {
     volatile uint32_t *out = (volatile uint32_t *)(uintptr_t)args[0];
+    uint32_t scale = args[1];
+    uint32_t iters = args[2];
     uint32_t tx = ctrl_read32(CTRL_THREAD_ID_X);
     uint32_t ty = ctrl_read32(CTRL_THREAD_ID_Y);
     uint32_t tz = ctrl_read32(CTRL_THREAD_ID_Z);
@@ -30,7 +32,9 @@ void _start(uint32_t *args)
     uint32_t block_id = bx + (by << 1) + (bz << 2);
     uint32_t global_id = local_id + (block_id << 3);
 
-    out[global_id] += global_id;
+    for (uint32_t i = 0; i < iters; ++i) {
+        out[global_id] += global_id * scale;
+    }
 
     __asm__ volatile("ebreak");
     __builtin_unreachable();

@@ -10,7 +10,9 @@
 - BAR2 VRAM 的 mmap 指针
 - VRAM size
 
-runtime 不负责 PCI 设备发现和 mmap。后续进入 Linux 后，可以在这层外面增加 sysfs mmap、UIO、VFIO 或自定义 kernel driver backend。
+runtime 不负责 PCI 设备发现和 mmap。当前裸机 PCI 初始化位于
+`baremetal/drivers/`；后续进入 Linux 后，可以在 runtime 外面增加
+sysfs mmap、UIO、VFIO 或自定义 kernel driver backend。
 
 ## API
 

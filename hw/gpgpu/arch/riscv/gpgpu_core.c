@@ -9,7 +9,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/log.h"
-#include "gpgpu.h"
+#include "../../gpgpu.h"
 #include "gpgpu_core.h"
 #include "gpgpu_riscv.h"
 #include <math.h>
@@ -130,6 +130,28 @@ static bool gpgpu_core_vram_load_u32(GPGPUState *s, uint32_t addr,
     return true;
 }
 
+static bool gpgpu_core_vram_load_u16(GPGPUState *s, uint32_t addr,
+                                     uint16_t *value)
+{
+    if (!gpgpu_core_vram_check(s, addr, sizeof(*value))) {
+        return false;
+    }
+
+    *value = lduw_le_p(s->vram_ptr + addr);
+    return true;
+}
+
+static bool gpgpu_core_vram_load_u8(GPGPUState *s, uint32_t addr,
+                                    uint8_t *value)
+{
+    if (!gpgpu_core_vram_check(s, addr, sizeof(*value))) {
+        return false;
+    }
+
+    *value = ldub_p(s->vram_ptr + addr);
+    return true;
+}
+
 static bool gpgpu_core_vram_store_u32(GPGPUState *s, uint32_t addr,
                                       uint32_t value)
 {
@@ -138,6 +160,28 @@ static bool gpgpu_core_vram_store_u32(GPGPUState *s, uint32_t addr,
     }
 
     stl_le_p(s->vram_ptr + addr, value);
+    return true;
+}
+
+static bool gpgpu_core_vram_store_u16(GPGPUState *s, uint32_t addr,
+                                      uint16_t value)
+{
+    if (!gpgpu_core_vram_check(s, addr, sizeof(value))) {
+        return false;
+    }
+
+    stw_le_p(s->vram_ptr + addr, value);
+    return true;
+}
+
+static bool gpgpu_core_vram_store_u8(GPGPUState *s, uint32_t addr,
+                                     uint8_t value)
+{
+    if (!gpgpu_core_vram_check(s, addr, sizeof(value))) {
+        return false;
+    }
+
+    stb_p(s->vram_ptr + addr, value);
     return true;
 }
 
@@ -338,21 +382,125 @@ static void exec_system(const GPGPURiscVDecode *dec, GPGPULane *lane) {
 }
 
 static void exec_op_imm(const GPGPURiscVDecode *dec, GPGPULane *lane) {
+    uint32_t rs1 = lane->gpr[dec->rs1].u32;
+    uint32_t shamt = dec->imm & 0x1f;
+
     switch (dec->funct3) {
-        case 0x0: lane->gpr[dec->rd].u32 = lane->gpr[dec->rs1].u32 + dec->imm; break;          // ADDI
-        case 0x1: lane->gpr[dec->rd].u32 = lane->gpr[dec->rs1].u32 << (dec->imm & 0x1F); break; // SLLI
-        case 0x7: lane->gpr[dec->rd].u32 = lane->gpr[dec->rs1].u32 & dec->imm; break;          // ANDI
+        case 0x0: lane->gpr[dec->rd].u32 = rs1 + dec->imm; break;          // ADDI
+        case 0x1: lane->gpr[dec->rd].u32 = rs1 << shamt; break;            // SLLI
+        case 0x2: lane->gpr[dec->rd].u32 = (int32_t)rs1 < dec->imm; break; // SLTI
+        case 0x3: lane->gpr[dec->rd].u32 = rs1 < (uint32_t)dec->imm; break; // SLTIU
+        case 0x4: lane->gpr[dec->rd].u32 = rs1 ^ dec->imm; break;          // XORI
+        case 0x5:
+            if ((dec->funct7 & 0x20) != 0) {
+                lane->gpr[dec->rd].u32 = (uint32_t)((int32_t)rs1 >> shamt); // SRAI
+            } else {
+                lane->gpr[dec->rd].u32 = rs1 >> shamt;                    // SRLI
+            }
+            break;
+        case 0x6: lane->gpr[dec->rd].u32 = rs1 | dec->imm; break;          // ORI
+        case 0x7: lane->gpr[dec->rd].u32 = rs1 & dec->imm; break;          // ANDI
     }
 }
 
 static void exec_op(const GPGPURiscVDecode *dec, GPGPULane *lane) {
-    if (dec->funct3 == 0x0 && dec->funct7 == 0x00) {
-        lane->gpr[dec->rd].u32 = lane->gpr[dec->rs1].u32 + lane->gpr[dec->rs2].u32;  // ADD
+    uint32_t rs1 = lane->gpr[dec->rs1].u32;
+    uint32_t rs2 = lane->gpr[dec->rs2].u32;
+    uint32_t shamt = rs2 & 0x1f;
+
+    if (dec->funct7 == 0x01) {
+        switch (dec->funct3) {
+        case 0x0:
+            lane->gpr[dec->rd].u32 = (uint32_t)((uint64_t)rs1 * rs2); // MUL
+            break;
+        }
+        return;
+    }
+
+    switch (dec->funct3) {
+    case 0x0:
+        if (dec->funct7 == 0x20) {
+            lane->gpr[dec->rd].u32 = rs1 - rs2; // SUB
+        } else {
+            lane->gpr[dec->rd].u32 = rs1 + rs2; // ADD
+        }
+        break;
+    case 0x1:
+        lane->gpr[dec->rd].u32 = rs1 << shamt; // SLL
+        break;
+    case 0x2:
+        lane->gpr[dec->rd].u32 = (int32_t)rs1 < (int32_t)rs2; // SLT
+        break;
+    case 0x3:
+        lane->gpr[dec->rd].u32 = rs1 < rs2; // SLTU
+        break;
+    case 0x4:
+        lane->gpr[dec->rd].u32 = rs1 ^ rs2; // XOR
+        break;
+    case 0x5:
+        if (dec->funct7 == 0x20) {
+            lane->gpr[dec->rd].u32 = (uint32_t)((int32_t)rs1 >> shamt); // SRA
+        } else {
+            lane->gpr[dec->rd].u32 = rs1 >> shamt; // SRL
+        }
+        break;
+    case 0x6:
+        lane->gpr[dec->rd].u32 = rs1 | rs2; // OR
+        break;
+    case 0x7:
+        lane->gpr[dec->rd].u32 = rs1 & rs2; // AND
+        break;
     }
 }
 
 static void exec_lui(const GPGPURiscVDecode *dec, GPGPULane *lane) {
     lane->gpr[dec->rd].u32 = dec->imm;
+}
+
+static void exec_auipc(const GPGPURiscVDecode *dec, GPGPULane *lane)
+{
+    lane->gpr[dec->rd].u32 = lane->pc + dec->imm;
+}
+
+static bool exec_branch(const GPGPURiscVDecode *dec, GPGPULane *lane)
+{
+    uint32_t rs1 = lane->gpr[dec->rs1].u32;
+    uint32_t rs2 = lane->gpr[dec->rs2].u32;
+    bool take = false;
+
+    switch (dec->funct3) {
+    case 0x0: take = (rs1 == rs2); break;                    // BEQ
+    case 0x1: take = (rs1 != rs2); break;                    // BNE
+    case 0x4: take = ((int32_t)rs1 < (int32_t)rs2); break;   // BLT
+    case 0x5: take = ((int32_t)rs1 >= (int32_t)rs2); break;  // BGE
+    case 0x6: take = (rs1 < rs2); break;                     // BLTU
+    case 0x7: take = (rs1 >= rs2); break;                    // BGEU
+    }
+
+    if (take) {
+        lane->pc += dec->imm;
+        return true;
+    }
+    return false;
+}
+
+static bool exec_jal(const GPGPURiscVDecode *dec, GPGPULane *lane)
+{
+    uint32_t next_pc = lane->pc + 4;
+
+    lane->gpr[dec->rd].u32 = next_pc;
+    lane->pc += dec->imm;
+    return true;
+}
+
+static bool exec_jalr(const GPGPURiscVDecode *dec, GPGPULane *lane)
+{
+    uint32_t next_pc = lane->pc + 4;
+    uint32_t target = (lane->gpr[dec->rs1].u32 + dec->imm) & ~1u;
+
+    lane->gpr[dec->rd].u32 = next_pc;
+    lane->pc = target;
+    return true;
 }
 
 static bool gpgpu_core_ctrl_load_u32(GPGPUState *s, uint32_t addr,
@@ -402,22 +550,52 @@ static bool gpgpu_core_ctrl_load_u32(GPGPUState *s, uint32_t addr,
 
 static void exec_load(const GPGPURiscVDecode *dec, GPGPULane *lane, GPGPUState *s) {
     uint32_t addr = lane->gpr[dec->rs1].u32 + dec->imm;
-    uint32_t value;
+    uint32_t value = 0;
+    uint16_t value16;
+    uint8_t value8;
+    bool loaded = false;
 
-    if (dec->funct3 != 0x2) {
-        return;
+    if (dec->funct3 == 0x2) {
+        loaded = gpgpu_core_ctrl_load_u32(s, addr, &value) ||
+                 gpgpu_core_vram_load_u32(s, addr, &value); // LW
+    } else {
+        switch (dec->funct3) {
+        case 0x0:
+            loaded = gpgpu_core_vram_load_u8(s, addr, &value8); // LB
+            value = (uint32_t)(int32_t)(int8_t)value8;
+            break;
+        case 0x1:
+            loaded = gpgpu_core_vram_load_u16(s, addr, &value16); // LH
+            value = (uint32_t)(int32_t)(int16_t)value16;
+            break;
+        case 0x4:
+            loaded = gpgpu_core_vram_load_u8(s, addr, &value8); // LBU
+            value = value8;
+            break;
+        case 0x5:
+            loaded = gpgpu_core_vram_load_u16(s, addr, &value16); // LHU
+            value = value16;
+            break;
+        }
     }
 
-    if (gpgpu_core_ctrl_load_u32(s, addr, &value) ||
-        gpgpu_core_vram_load_u32(s, addr, &value)) {  // LW
+    if (loaded) {
         lane->gpr[dec->rd].u32 = value;
     }
 }
 
 static void exec_store(const GPGPURiscVDecode *dec, GPGPULane *lane, GPGPUState *s) {
     uint32_t addr = lane->gpr[dec->rs1].u32 + dec->imm;
-    if (dec->funct3 == 0x2) {  // SW
+    switch (dec->funct3) {
+    case 0x0:
+        gpgpu_core_vram_store_u8(s, addr, lane->gpr[dec->rs2].u32); // SB
+        break;
+    case 0x1:
+        gpgpu_core_vram_store_u16(s, addr, lane->gpr[dec->rs2].u32); // SH
+        break;
+    case 0x2:
         gpgpu_core_vram_store_u32(s, addr, lane->gpr[dec->rs2].u32);
+        break;
     }
 }
 
@@ -509,12 +687,18 @@ static void exec_op_fp(const GPGPURiscVDecode *dec, GPGPULane *lane)
 }
 
 // ==================== 主解释器入口 ====================
-static void instru_interpret(uint32_t instr, GPGPULane *lane, GPGPUState *s) {
+static bool instru_interpret(uint32_t instr, GPGPULane *lane, GPGPUState *s) {
+    bool pc_updated = false;
+
     lane->gpr[0].u32 = 0;  // x0 恒为 0
 
     GPGPURiscVDecode dec = gpgpu_riscv_decode(instr);
 
     switch (dec.opcode) {
+        case 0x17:
+            dec.imm = gpgpu_riscv_imm_u(instr);
+            exec_auipc(&dec, lane);
+            break;  // AUIPC
         case 0x13:
             dec.imm = gpgpu_riscv_imm_i(instr);
             exec_op_imm(&dec, lane);
@@ -526,6 +710,18 @@ static void instru_interpret(uint32_t instr, GPGPULane *lane, GPGPUState *s) {
             dec.imm = gpgpu_riscv_imm_u(instr);
             exec_lui(&dec, lane);
             break;  // LUI
+        case 0x63:
+            dec.imm = gpgpu_riscv_imm_b(instr);
+            pc_updated = exec_branch(&dec, lane);
+            break;  // BRANCH
+        case 0x6f:
+            dec.imm = gpgpu_riscv_imm_j(instr);
+            pc_updated = exec_jal(&dec, lane);
+            break;  // JAL
+        case 0x67:
+            dec.imm = gpgpu_riscv_imm_i(instr);
+            pc_updated = exec_jalr(&dec, lane);
+            break;  // JALR
         case 0x03:
             dec.imm = gpgpu_riscv_imm_i(instr);
             exec_load(&dec, lane, s);
@@ -543,6 +739,7 @@ static void instru_interpret(uint32_t instr, GPGPULane *lane, GPGPUState *s) {
     }
 
     lane->gpr[0].u32 = 0;  // 锁定 x0
+    return pc_updated;
 }
 /* TODO: Implement kernel dispatch and execution */
 int gpgpu_core_exec_kernel(GPGPULane *lane, GPGPUState *s)
@@ -553,7 +750,8 @@ int gpgpu_core_exec_kernel(GPGPULane *lane, GPGPUState *s)
         return -1;
     }
     if (instr == 0x00100073) return 1;
-    instru_interpret(instr, lane, s);
-    lane->pc += 4;
+    if (!instru_interpret(instr, lane, s)) {
+        lane->pc += 4;
+    }
     return 0;
 }

@@ -324,5 +324,5 @@ mhartid = lane identity
 
 后续需要补充：
 
-- 补 branch/jump/MUL/FLW/FSW 等指令。
+- 继续补齐除 `mul` 外的 RV32M 指令，以及 FLW/FSW 等浮点 load/store。
 - 定义 `max_cycles` 超时行为和错误传播。

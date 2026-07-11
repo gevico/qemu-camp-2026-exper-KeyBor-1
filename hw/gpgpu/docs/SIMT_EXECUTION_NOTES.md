@@ -293,42 +293,51 @@ gpgpu_core_exec_warp()
 
 现在已经可以用 C 写设备 kernel，再由 RISC-V 编译器编译成 `.text` binary 上传执行。
 
-但当前 core interpreter 只支持很小的 RV32 子集，例如：
+当前 core interpreter 支持的 RV32 子集仍然有限，但已经覆盖了基础 C
+kernel 需要的一部分控制流和整数运算，例如：
 
 ```text
 lui
+auipc
 addi
 slli
+srli/srai
 andi
+ori/xori
 add
+sub
+and/or/xor
+slt/sltu/slti/sltiu
+beq/bne/blt/bge/bltu/bgeu
+jal/jalr
+mul
 lw
 sw
+lb/lbu/lh/lhu
+sb/sh
 system/ebreak
 部分 fp 指令
 ```
 
-因此 C kernel 需要避免生成当前不支持的指令，例如：
+因此 C kernel 已经可以包含简单 `for` 循环和运行时乘法。但它仍需避免或谨慎处理当前不支持/不完整的情况，例如：
 
 ```text
-branch
-jal/jalr
-mul
-auipc
-复杂栈访问
-函数调用返回
+除 mul 外的 RV32M 指令
+更复杂的函数调用约定
+复杂栈使用
+未覆盖的 load/store/fp 组合
 ```
 
-当前 `thread_add_kernel.c` 能跑，是因为它被写成：
+当前 `thread_add_kernel.c` 能跑，并且会生成：
 
 ```text
-无循环
-无 if
-无函数调用返回
-用 shift 代替乘法
+mul
+bne
+jal 形式的 loop back edge
 末尾显式 ebreak
 ```
 
-后续如果希望写普通 C kernel，就需要逐步补齐解释器的 RISC-V 指令支持。
+后续如果希望写更普通的 CNN kernel，还需要继续补齐解释器的 RISC-V 指令支持和异常上报。
 
 ## 10. 当前应坚持的模型
 

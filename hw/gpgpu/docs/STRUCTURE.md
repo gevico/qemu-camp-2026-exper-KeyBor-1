@@ -10,23 +10,34 @@ hw/gpgpu/
 ├── meson.build
 ├── gpgpu.c
 ├── gpgpu.h
-├── gpgpu_core.c
-├── gpgpu_core.h
-├── gpgpu_riscv.h
+├── arch/
+│   └── riscv/
+│       ├── gpgpu_core.c
+│       ├── gpgpu_core.h
+│       └── gpgpu_riscv.h
+├── kernels/
+│   └── thread_add_kernel.c
 ├── baremetal/
 │   ├── Makefile
-│   ├── linker.ld
-│   ├── start.S
-│   ├── main.c
-│   ├── thread_add_kernel.c
-│   ├── uart_smoke.c
-│   └── qemu_virt_platform.h
+│   ├── include/
+│   │   └── qemu_virt_platform.h
+│   ├── scripts/
+│   │   ├── linker.ld
+│   │   └── start.S
+│   ├── src/
+│   │   ├── main.c
+│   │   └── uart_smoke.c
+│   └── drivers/
+│       ├── include/
+│       │   └── gpgpu_pci.h
+│       └── src/
+│           └── gpgpu_pci.c
 ├── runtime/
-│   ├── gpgpu_runtime.c
-│   ├── gpgpu_runtime.h
-│   ├── gpgpu_pci.c
-│   ├── gpgpu_pci.h
-│   └── gpgpu_freestanding.h
+│   ├── include/
+│   │   ├── gpgpu_runtime.h
+│   │   └── gpgpu_freestanding.h
+│   └── src/
+│       └── gpgpu_runtime.c
 ├── dev/
 │   ├── Dockerfile
 │   ├── build-image.zsh
@@ -68,9 +79,9 @@ gpgpu.h
 核心执行模型在：
 
 ```text
-gpgpu_core.c
-gpgpu_core.h
-gpgpu_riscv.h
+arch/riscv/gpgpu_core.c
+arch/riscv/gpgpu_core.h
+arch/riscv/gpgpu_riscv.h
 ```
 
 职责：
@@ -81,10 +92,9 @@ gpgpu_riscv.h
 - 解释当前支持的 RV32 指令。
 - 处理 `GPGPU_CORE_CTRL_*` builtin register load。
 
-进入 CNN 阶段后，这层最需要增强：
+进入 CNN 阶段后，这层仍需要增强：
 
-- branch/jump。
-- `mul` 或更多 RV32M 指令。
+- 除 `mul` 外的更多 RV32M 指令。
 - 更完整的 load/store 类型。
 - 更明确的错误上报。
 - 后续可能加入 divergence/predicate/barrier。
@@ -99,8 +109,6 @@ runtime/
 
 职责：
 
-- PCI ECAM 扫描。
-- BAR 获取。
 - VRAM bump allocator。
 - host 到 VRAM 的读写。
 - kernel code 上传。
@@ -116,6 +124,12 @@ threadIdx/blockIdx/blockDim/gridDim = kernel 通过 builtin register 读取
 ```
 
 runtime 不再把 `gridDim/blockDim` 塞进 kernel args header。
+
+PCI ECAM 扫描和 BAR 初始化不属于通用 runtime，当前放在裸机 driver：
+
+```text
+baremetal/drivers/
+```
 
 ## Baremetal Test Layer
 
@@ -135,10 +149,20 @@ baremetal/
 
 当前有两类测试：
 
-- `main.c`：GPGPU PCI/runtime/kernel smoke。
-- `uart_smoke.c`：单独验证 UART 和裸机入口。
+- `src/main.c`：GPGPU PCI/runtime/kernel smoke。
+- `src/uart_smoke.c`：单独验证 UART 和裸机入口。
 
-`thread_add_kernel.c` 是设备侧 C kernel。Makefile 会把它编译为 RV32 `.text`，再生成 `baremetal/build/thread_add_kernel.inc` 给 `main.c` 上传。
+`kernels/thread_add_kernel.c` 是设备侧 C kernel。Makefile 会把它编译为 RV32 `.text`，再生成 `baremetal/build/thread_add_kernel.inc` 给 `baremetal/src/main.c` 上传。
+
+## Device Kernels
+
+设备侧 kernel 在：
+
+```text
+kernels/
+```
+
+这些 kernel 运行在 GPGPU core 上，不属于裸机 host。当前 baremetal 程序只是把它们编译成 `.text`、上传到 VRAM 并 launch。后续进入 Linux driver 或用户态 runtime 时，也应该复用同一批 kernel 源码。
 
 ## Dev Environment
 
@@ -188,7 +212,7 @@ docs/DEV_ENV.md
 
 - 源码保留在 `hw/gpgpu/`，生成物放入 `baremetal/build/`。
 - 不提交 ELF、bin、object、反汇编、生成的 include。
-- 设备侧 kernel 可以先放在 `baremetal/`，等数量变多后再拆出 `kernels/`。
+- 设备侧 kernel 放在 `kernels/`，不放在 `baremetal/`。
 - 每新增一个 kernel，保留 C 源码和构建规则，不保留构建产物。
 - 每次扩展解释器指令，应补一个能触发该指令的 C kernel 或 baremetal smoke。
 
@@ -197,11 +221,11 @@ docs/DEV_ENV.md
 以执行一个最小 CNN 为目标，建议先按以下顺序推进：
 
 ```text
-1. 扩展 RV32 指令子集，让普通 C kernel 能使用 if/loop/mul。
-2. 增加 vector add / elementwise / relu 这类简单 C kernel。
-3. 增加 2D tensor indexing smoke，验证 width/height/stride 参数。
-4. 增加 naive conv2d kernel，不先追求性能。
-5. 增加 host/baremetal 侧 tensor 初始化和 golden result 校验。
+1. 增加 vector add / elementwise / relu 这类简单 C kernel。
+2. 增加 2D tensor indexing smoke，验证 width/height/stride 参数。
+3. 增加 naive conv2d kernel，不先追求性能。
+4. 增加 host/baremetal 侧 tensor 初始化和 golden result 校验。
+5. 按 kernel 反汇编继续补齐缺失的 RISC-V 指令。
 6. 再考虑 tiling/shared memory/barrier/优化。
 ```
 

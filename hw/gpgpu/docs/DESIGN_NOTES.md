@@ -40,7 +40,7 @@ lane->fpr[rd].f32 = f_rs1 + f_rs2;
 
 改进前，每个 `exec_*()` 函数都重复从 `instr` 里解析 `rd`、`rs1`、`rs2`、`funct3`、`funct7` 和 immediate。随着 `LW`、branch、jump 等指令增加，这种重复会迅速变成维护负担。
 
-改进后，新增 `gpgpu_riscv.h`，集中定义：
+改进后，新增 `arch/riscv/gpgpu_riscv.h`，集中定义：
 
 ```c
 typedef struct GPGPURiscVDecode {

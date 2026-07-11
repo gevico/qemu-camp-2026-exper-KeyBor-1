@@ -20,4 +20,4 @@
 baremetal RISC-V -> PCI scan -> BAR0/BAR2 -> runtime -> launch -> SIMT core -> C kernel
 ```
 
-下一阶段目标是支持 CNN kernel。优先级是先补齐普通 C kernel 需要的 RISC-V 指令和基础 tensor indexing，再实现 naive conv2d。
+下一阶段目标是支持 CNN kernel。当前已经具备简单 C loop kernel 所需的基础 branch/jump/mul，后续重点是补充 tensor indexing smoke，并按 naive conv2d 反汇编继续补齐缺失指令。

@@ -20,7 +20,7 @@
 #include "migration/vmstate.h"
 
 #include "gpgpu.h"
-#include "gpgpu_core.h"
+#include "arch/riscv/gpgpu_core.h"
 
 /* TODO: Implement MMIO control register read */
 static uint64_t gpgpu_ctrl_read(void *opaque, hwaddr addr, unsigned size)
