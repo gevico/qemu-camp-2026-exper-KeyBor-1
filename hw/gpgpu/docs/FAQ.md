@@ -629,6 +629,51 @@ C[m][o] -> m * O + o
 `GPGPUTensorDesc.stride_*`。stride 字段先保留给后续更复杂的
 view/transpose/padding。
 
+当前阶段只要规定矩阵必须是连续行主序，就可以只用 `M/K/O` 推算 offset。
+不能只用 `M/K/O` 的情况，是逻辑矩阵形状和物理内存跨度不一致：
+
+```text
+1. Padding / 对齐
+
+逻辑上每行 K=3：
+[1, 2, 3]
+[4, 5, 6]
+
+物理上为了对齐，每行占 4 个 slot：
+[1, 2, 3, pad]
+[4, 5, 6, pad]
+
+这时下一行起点是 m * 4，不是 m * 3。
+```
+
+```text
+2. Slice / view
+
+从大矩阵 big[10][10] 中取一个逻辑上 [3,4] 的小矩阵。
+小矩阵每行只有 4 个有效元素，但下一行在物理内存里仍然跨过 big 的 10 列。
+```
+
+```text
+3. Transpose view
+
+逻辑上把 B[k][o] 看成 B_T[o][k]，但不真的复制和重排内存。
+这时逻辑下标移动和物理内存移动不再等于 row * cols + col。
+```
+
+这些情况才需要 stride：
+
+```text
+offset = row * stride_row + col * stride_col
+```
+
+在做 padding、slice、transpose view 之前，matmul kernel 保持简单：
+
+```text
+A[m][k] -> m * K + k
+B[k][o] -> k * O + o
+C[m][o] -> m * O + o
+```
+
 所以 `MK/KO/MO` 不是硬件概念，也不是额外数据本身。它们只是约定：
 
 ```text
