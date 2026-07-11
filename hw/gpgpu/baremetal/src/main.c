@@ -19,6 +19,25 @@
 #define MATMUL_M 2
 #define MATMUL_K 3
 #define MATMUL_O 2
+#define CONV_N 1
+#define CONV_C 1
+#define CONV_H 4
+#define CONV_W 4
+#define CONV_O 1
+#define CONV_KH 3
+#define CONV_KW 3
+#define CONV_OUT_H 2
+#define CONV_OUT_W 2
+#define CONV_M (CONV_N * CONV_OUT_H * CONV_OUT_W)
+#define CONV_K (CONV_C * CONV_KH * CONV_KW)
+#define POOL_N 1
+#define POOL_C 1
+#define POOL_H 4
+#define POOL_W 4
+#define POOL_OUT_H 2
+#define POOL_OUT_W 2
+#define POOL_KERNEL 2
+#define POOL_STRIDE 2
 
 #define RV_RD(rd)          ((uint32_t)(rd) << 7)
 #define RV_RS1(rs1)        ((uint32_t)(rs1) << 15)
@@ -44,6 +63,9 @@
 #include "build/linear_reduce_i32_kernel.inc"
 #include "build/matmul_partial_i32_kernel.inc"
 #include "build/matmul_reduce_i32_kernel.inc"
+#include "build/im2col_i32_kernel.inc"
+#include "build/oihw_to_ko_i32_kernel.inc"
+#include "build/maxpool_i32_kernel.inc"
 
 static void uart_putc(char c)
 {
@@ -202,6 +224,53 @@ int main(void)
     GPGPUMatmulPartialArgs matmul_partial_args;
     GPGPUMatmulReduceArgs matmul_reduce_args;
     int matmul_ok = 1;
+    int32_t conv_input[CONV_N * CONV_C * CONV_H * CONV_W] = {
+        1, 2, 3, 4,
+        5, 6, 7, 8,
+        9, 10, 11, 12,
+        13, 14, 15, 16,
+    };
+    int32_t conv_weight[CONV_O * CONV_C * CONV_KH * CONV_KW] = {
+        1, 0, -1,
+        1, 0, -1,
+        1, 0, -1,
+    };
+    int32_t conv_col[CONV_M * CONV_K];
+    int32_t conv_ko[CONV_K * CONV_O];
+    int32_t conv_partial[CONV_M * CONV_O * CONV_K];
+    int32_t conv_output[CONV_M * CONV_O];
+    int32_t conv_expected[CONV_M * CONV_O];
+    uint32_t conv_input_addr;
+    uint32_t conv_weight_addr;
+    uint32_t conv_col_addr;
+    uint32_t conv_ko_addr;
+    uint32_t conv_partial_addr;
+    uint32_t conv_output_addr;
+    uint32_t im2col_kernel_addr;
+    uint32_t im2col_args_addr;
+    uint32_t oihw_to_ko_kernel_addr;
+    uint32_t oihw_to_ko_args_addr;
+    uint32_t conv_matmul_partial_args_addr;
+    uint32_t conv_matmul_reduce_args_addr;
+    GPGPUIm2ColArgs im2col_args;
+    GPGPUOihwToKoArgs oihw_to_ko_args;
+    GPGPUMatmulPartialArgs conv_matmul_partial_args;
+    GPGPUMatmulReduceArgs conv_matmul_reduce_args;
+    int conv_ok = 1;
+    int32_t pool_input[POOL_N * POOL_C * POOL_H * POOL_W] = {
+        1, 3, 2, 4,
+        5, 6, 7, 8,
+        9, 1, 4, 2,
+        3, 5, 6, 0,
+    };
+    int32_t pool_output[POOL_N * POOL_C * POOL_OUT_H * POOL_OUT_W];
+    int32_t pool_expected[POOL_N * POOL_C * POOL_OUT_H * POOL_OUT_W];
+    uint32_t pool_input_addr;
+    uint32_t pool_output_addr;
+    uint32_t pool_kernel_addr;
+    uint32_t pool_args_addr;
+    GPGPUMaxPool2DArgs pool_args;
+    int pool_ok = 1;
     int ret;
 
     /*
@@ -875,5 +944,347 @@ int main(void)
 
     uart_puts("gpgpu matmul_i32 ");
     uart_puts(matmul_ok ? "PASS\n" : "FAIL\n");
-    return matmul_ok ? 0 : 1;
+    if (!matmul_ok) {
+        return 1;
+    }
+
+    for (uint32_t m = 0; m < CONV_M; ++m) {
+        uint32_t oh = m / CONV_OUT_W;
+        uint32_t ow = m - oh * CONV_OUT_W;
+        int32_t acc = 0;
+
+        for (uint32_t kh = 0; kh < CONV_KH; ++kh) {
+            for (uint32_t kw = 0; kw < CONV_KW; ++kw) {
+                acc += conv_input[(oh + kh) * CONV_W + (ow + kw)] *
+                       conv_weight[kh * CONV_KW + kw];
+            }
+        }
+        conv_expected[m] = acc;
+    }
+    for (uint32_t i = 0; i < CONV_M * CONV_K; ++i) {
+        conv_col[i] = 0x11111111;
+    }
+    for (uint32_t i = 0; i < CONV_K * CONV_O; ++i) {
+        conv_ko[i] = 0x22222222;
+    }
+    for (uint32_t i = 0; i < CONV_M * CONV_O * CONV_K; ++i) {
+        conv_partial[i] = 0x33333333;
+    }
+    for (uint32_t i = 0; i < CONV_M * CONV_O; ++i) {
+        conv_output[i] = 0x44444444;
+    }
+
+    ret = gpgpu_malloc(&dev, &conv_input_addr, sizeof(conv_input));
+    if (ret < 0) {
+        report_ret("gpgpu_malloc(conv_input)", ret);
+        return ret;
+    }
+    ret = gpgpu_malloc(&dev, &conv_weight_addr, sizeof(conv_weight));
+    if (ret < 0) {
+        report_ret("gpgpu_malloc(conv_weight)", ret);
+        return ret;
+    }
+    ret = gpgpu_malloc(&dev, &conv_col_addr, sizeof(conv_col));
+    if (ret < 0) {
+        report_ret("gpgpu_malloc(conv_col)", ret);
+        return ret;
+    }
+    ret = gpgpu_malloc(&dev, &conv_ko_addr, sizeof(conv_ko));
+    if (ret < 0) {
+        report_ret("gpgpu_malloc(conv_ko)", ret);
+        return ret;
+    }
+    ret = gpgpu_malloc(&dev, &conv_partial_addr, sizeof(conv_partial));
+    if (ret < 0) {
+        report_ret("gpgpu_malloc(conv_partial)", ret);
+        return ret;
+    }
+    ret = gpgpu_malloc(&dev, &conv_output_addr, sizeof(conv_output));
+    if (ret < 0) {
+        report_ret("gpgpu_malloc(conv_output)", ret);
+        return ret;
+    }
+
+    ret = gpgpu_write(&dev, conv_input_addr, conv_input, sizeof(conv_input));
+    if (ret < 0) {
+        report_ret("gpgpu_write(conv_input)", ret);
+        return ret;
+    }
+    ret = gpgpu_write(&dev, conv_weight_addr, conv_weight,
+                      sizeof(conv_weight));
+    if (ret < 0) {
+        report_ret("gpgpu_write(conv_weight)", ret);
+        return ret;
+    }
+    ret = gpgpu_write(&dev, conv_col_addr, conv_col, sizeof(conv_col));
+    if (ret < 0) {
+        report_ret("gpgpu_write(conv_col)", ret);
+        return ret;
+    }
+    ret = gpgpu_write(&dev, conv_ko_addr, conv_ko, sizeof(conv_ko));
+    if (ret < 0) {
+        report_ret("gpgpu_write(conv_ko)", ret);
+        return ret;
+    }
+    ret = gpgpu_write(&dev, conv_partial_addr, conv_partial,
+                      sizeof(conv_partial));
+    if (ret < 0) {
+        report_ret("gpgpu_write(conv_partial)", ret);
+        return ret;
+    }
+    ret = gpgpu_write(&dev, conv_output_addr, conv_output,
+                      sizeof(conv_output));
+    if (ret < 0) {
+        report_ret("gpgpu_write(conv_output)", ret);
+        return ret;
+    }
+
+    im2col_args = (GPGPUIm2ColArgs) {
+        .input = gpgpu_tensor_make_nchw_i32(conv_input_addr, CONV_N,
+                                            CONV_C, CONV_H, CONV_W),
+        .output = gpgpu_tensor_make_mk_i32(conv_col_addr, CONV_M, CONV_K),
+        .kernel_h = CONV_KH,
+        .kernel_w = CONV_KW,
+        .stride_h = 1,
+        .stride_w = 1,
+        .out_h = CONV_OUT_H,
+        .out_w = CONV_OUT_W,
+    };
+    oihw_to_ko_args = (GPGPUOihwToKoArgs) {
+        .input = gpgpu_tensor_make_oihw_i32(conv_weight_addr, CONV_O,
+                                            CONV_C, CONV_KH, CONV_KW),
+        .output = gpgpu_tensor_make_ko_i32(conv_ko_addr, CONV_K, CONV_O),
+        .out_channels = CONV_O,
+        .in_channels = CONV_C,
+        .kernel_h = CONV_KH,
+        .kernel_w = CONV_KW,
+    };
+    conv_matmul_partial_args = (GPGPUMatmulPartialArgs) {
+        .a = gpgpu_tensor_make_mk_i32(conv_col_addr, CONV_M, CONV_K),
+        .b = gpgpu_tensor_make_ko_i32(conv_ko_addr, CONV_K, CONV_O),
+        .partial = gpgpu_tensor_make_1d_i32(
+            conv_partial_addr, CONV_M * CONV_O * CONV_K),
+        .m = CONV_M,
+        .k = CONV_K,
+        .o = CONV_O,
+    };
+    conv_matmul_reduce_args = (GPGPUMatmulReduceArgs) {
+        .partial = gpgpu_tensor_make_1d_i32(
+            conv_partial_addr, CONV_M * CONV_O * CONV_K),
+        .c = gpgpu_tensor_make_mo_i32(conv_output_addr, CONV_M, CONV_O),
+        .m = CONV_M,
+        .k = CONV_K,
+        .o = CONV_O,
+    };
+
+    ret = gpgpu_upload_kernel(&dev, &im2col_kernel_addr,
+                              im2col_i32_kernel_code,
+                              sizeof(im2col_i32_kernel_code) /
+                              sizeof(im2col_i32_kernel_code[0]));
+    if (ret < 0) {
+        report_ret("gpgpu_upload_kernel(im2col_i32)", ret);
+        return ret;
+    }
+    ret = gpgpu_upload_kernel(&dev, &oihw_to_ko_kernel_addr,
+                              oihw_to_ko_i32_kernel_code,
+                              sizeof(oihw_to_ko_i32_kernel_code) /
+                              sizeof(oihw_to_ko_i32_kernel_code[0]));
+    if (ret < 0) {
+        report_ret("gpgpu_upload_kernel(oihw_to_ko_i32)", ret);
+        return ret;
+    }
+    ret = gpgpu_upload_args(&dev, &im2col_args_addr, &im2col_args,
+                            sizeof(im2col_args));
+    if (ret < 0) {
+        report_ret("gpgpu_upload_args(im2col_i32)", ret);
+        return ret;
+    }
+    ret = gpgpu_upload_args(&dev, &oihw_to_ko_args_addr, &oihw_to_ko_args,
+                            sizeof(oihw_to_ko_args));
+    if (ret < 0) {
+        report_ret("gpgpu_upload_args(oihw_to_ko_i32)", ret);
+        return ret;
+    }
+    ret = gpgpu_upload_args(&dev, &conv_matmul_partial_args_addr,
+                            &conv_matmul_partial_args,
+                            sizeof(conv_matmul_partial_args));
+    if (ret < 0) {
+        report_ret("gpgpu_upload_args(conv_matmul_partial)", ret);
+        return ret;
+    }
+    ret = gpgpu_upload_args(&dev, &conv_matmul_reduce_args_addr,
+                            &conv_matmul_reduce_args,
+                            sizeof(conv_matmul_reduce_args));
+    if (ret < 0) {
+        report_ret("gpgpu_upload_args(conv_matmul_reduce)", ret);
+        return ret;
+    }
+
+    ret = gpgpu_launch(&dev, im2col_kernel_addr, im2col_args_addr,
+                       (GPGPURuntimeDim3){ CONV_N, CONV_OUT_H, CONV_OUT_W },
+                       (GPGPURuntimeDim3){ CONV_KW, CONV_KH, CONV_C });
+    trace_u32("gpgpu im2col_i32 global_status",
+              ctrl_read32(&dev, GPGPU_REG_GLOBAL_STATUS));
+    trace_u32("gpgpu im2col_i32 error_status",
+              ctrl_read32(&dev, GPGPU_REG_ERROR_STATUS));
+    if (ret < 0) {
+        report_ret("gpgpu_launch(im2col_i32)", ret);
+        return ret;
+    }
+    ret = gpgpu_launch(&dev, oihw_to_ko_kernel_addr, oihw_to_ko_args_addr,
+                       (GPGPURuntimeDim3){ CONV_O, CONV_C, CONV_KH },
+                       (GPGPURuntimeDim3){ CONV_KW, 1, 1 });
+    trace_u32("gpgpu oihw_to_ko_i32 global_status",
+              ctrl_read32(&dev, GPGPU_REG_GLOBAL_STATUS));
+    trace_u32("gpgpu oihw_to_ko_i32 error_status",
+              ctrl_read32(&dev, GPGPU_REG_ERROR_STATUS));
+    if (ret < 0) {
+        report_ret("gpgpu_launch(oihw_to_ko_i32)", ret);
+        return ret;
+    }
+    ret = gpgpu_launch(&dev, matmul_partial_kernel_addr,
+                       conv_matmul_partial_args_addr,
+                       (GPGPURuntimeDim3){ CONV_M, CONV_O, 1 },
+                       (GPGPURuntimeDim3){ CONV_K, 1, 1 });
+    trace_u32("gpgpu conv_matmul_partial global_status",
+              ctrl_read32(&dev, GPGPU_REG_GLOBAL_STATUS));
+    trace_u32("gpgpu conv_matmul_partial error_status",
+              ctrl_read32(&dev, GPGPU_REG_ERROR_STATUS));
+    if (ret < 0) {
+        report_ret("gpgpu_launch(conv_matmul_partial)", ret);
+        return ret;
+    }
+    ret = gpgpu_launch(&dev, matmul_reduce_kernel_addr,
+                       conv_matmul_reduce_args_addr,
+                       (GPGPURuntimeDim3){ CONV_M, 1, 1 },
+                       (GPGPURuntimeDim3){ CONV_O, 1, 1 });
+    trace_u32("gpgpu conv_matmul_reduce global_status",
+              ctrl_read32(&dev, GPGPU_REG_GLOBAL_STATUS));
+    trace_u32("gpgpu conv_matmul_reduce error_status",
+              ctrl_read32(&dev, GPGPU_REG_ERROR_STATUS));
+    if (ret < 0) {
+        report_ret("gpgpu_launch(conv_matmul_reduce)", ret);
+        return ret;
+    }
+
+    ret = gpgpu_read(&dev, conv_output_addr, conv_output,
+                     sizeof(conv_output));
+    if (ret < 0) {
+        report_ret("gpgpu_read(conv_lowered_i32)", ret);
+        return ret;
+    }
+    for (uint32_t i = 0; i < CONV_M * CONV_O; ++i) {
+        uart_puts("gpgpu conv_lowered_i32[");
+        uart_puthex32(i);
+        uart_puts("]=");
+        uart_puthex32((uint32_t)conv_output[i]);
+        uart_puts("\n");
+        if (conv_output[i] != conv_expected[i]) {
+            conv_ok = 0;
+        }
+    }
+    uart_puts("gpgpu conv_lowered_i32 ");
+    uart_puts(conv_ok ? "PASS\n" : "FAIL\n");
+    if (!conv_ok) {
+        return 1;
+    }
+
+    for (uint32_t oh = 0; oh < POOL_OUT_H; ++oh) {
+        for (uint32_t ow = 0; ow < POOL_OUT_W; ++ow) {
+            uint32_t ih0 = oh * POOL_STRIDE;
+            uint32_t iw0 = ow * POOL_STRIDE;
+            int32_t max_value = pool_input[ih0 * POOL_W + iw0];
+
+            pool_output[oh * POOL_OUT_W + ow] = 0x55555555;
+            for (uint32_t kh = 0; kh < POOL_KERNEL; ++kh) {
+                for (uint32_t kw = 0; kw < POOL_KERNEL; ++kw) {
+                    int32_t value =
+                        pool_input[(ih0 + kh) * POOL_W + (iw0 + kw)];
+
+                    if (value > max_value) {
+                        max_value = value;
+                    }
+                }
+            }
+            pool_expected[oh * POOL_OUT_W + ow] = max_value;
+        }
+    }
+
+    ret = gpgpu_malloc(&dev, &pool_input_addr, sizeof(pool_input));
+    if (ret < 0) {
+        report_ret("gpgpu_malloc(pool_input)", ret);
+        return ret;
+    }
+    ret = gpgpu_malloc(&dev, &pool_output_addr, sizeof(pool_output));
+    if (ret < 0) {
+        report_ret("gpgpu_malloc(pool_output)", ret);
+        return ret;
+    }
+    ret = gpgpu_write(&dev, pool_input_addr, pool_input, sizeof(pool_input));
+    if (ret < 0) {
+        report_ret("gpgpu_write(pool_input)", ret);
+        return ret;
+    }
+    ret = gpgpu_write(&dev, pool_output_addr, pool_output,
+                      sizeof(pool_output));
+    if (ret < 0) {
+        report_ret("gpgpu_write(pool_output)", ret);
+        return ret;
+    }
+    pool_args = (GPGPUMaxPool2DArgs) {
+        .input = gpgpu_tensor_make_nchw_i32(pool_input_addr, POOL_N, POOL_C,
+                                            POOL_H, POOL_W),
+        .output = gpgpu_tensor_make_nchw_i32(pool_output_addr, POOL_N, POOL_C,
+                                             POOL_OUT_H, POOL_OUT_W),
+        .kernel_h = POOL_KERNEL,
+        .kernel_w = POOL_KERNEL,
+        .pad_h = 0,
+        .pad_w = 0,
+        .stride_h = POOL_STRIDE,
+        .stride_w = POOL_STRIDE,
+    };
+    ret = gpgpu_upload_kernel(&dev, &pool_kernel_addr,
+                              maxpool_i32_kernel_code,
+                              sizeof(maxpool_i32_kernel_code) /
+                              sizeof(maxpool_i32_kernel_code[0]));
+    if (ret < 0) {
+        report_ret("gpgpu_upload_kernel(maxpool_i32)", ret);
+        return ret;
+    }
+    ret = gpgpu_upload_args(&dev, &pool_args_addr, &pool_args,
+                            sizeof(pool_args));
+    if (ret < 0) {
+        report_ret("gpgpu_upload_args(maxpool_i32)", ret);
+        return ret;
+    }
+    ret = gpgpu_launch(&dev, pool_kernel_addr, pool_args_addr,
+                       (GPGPURuntimeDim3){ POOL_N, POOL_C, POOL_OUT_H },
+                       (GPGPURuntimeDim3){ POOL_OUT_W, 1, 1 });
+    trace_u32("gpgpu maxpool_i32 global_status",
+              ctrl_read32(&dev, GPGPU_REG_GLOBAL_STATUS));
+    trace_u32("gpgpu maxpool_i32 error_status",
+              ctrl_read32(&dev, GPGPU_REG_ERROR_STATUS));
+    if (ret < 0) {
+        report_ret("gpgpu_launch(maxpool_i32)", ret);
+        return ret;
+    }
+    ret = gpgpu_read(&dev, pool_output_addr, pool_output,
+                     sizeof(pool_output));
+    if (ret < 0) {
+        report_ret("gpgpu_read(maxpool_i32)", ret);
+        return ret;
+    }
+    for (uint32_t i = 0; i < POOL_N * POOL_C * POOL_OUT_H * POOL_OUT_W; ++i) {
+        uart_puts("gpgpu maxpool_i32[");
+        uart_puthex32(i);
+        uart_puts("]=");
+        uart_puthex32((uint32_t)pool_output[i]);
+        uart_puts("\n");
+        if (pool_output[i] != pool_expected[i]) {
+            pool_ok = 0;
+        }
+    }
+    uart_puts("gpgpu maxpool_i32 ");
+    uart_puts(pool_ok ? "PASS\n" : "FAIL\n");
+    return pool_ok ? 0 : 1;
 }

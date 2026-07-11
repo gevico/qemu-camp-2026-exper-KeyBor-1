@@ -706,3 +706,95 @@ matmul_reduce_i32:
 
 后续做 conv lowering 时，会先把卷积输入窗口整理成 `MK`，把卷积权重整理
 成 `KO`，再直接复用这套 matmul。
+
+## 21. Conv2D 为什么可以拆成 im2col、OIHW-to-KO 和 matmul？
+
+直接卷积公式是：
+
+```text
+output[n][oc][oh][ow] =
+  sum over ic, kh, kw:
+    input[n][ic][oh + kh][ow + kw] * weight[oc][ic][kh][kw]
+```
+
+矩阵乘公式是：
+
+```text
+C[m][o] = sum_k A[m][k] * B[k][o]
+```
+
+所以 lowering 的目标是把卷积里的三个归约维度：
+
+```text
+ic, kh, kw
+```
+
+压平成一个矩阵乘维度：
+
+```text
+k = ic * kernel_h * kernel_w + kh * kernel_w + kw
+```
+
+第一步 `im2col_i32`：
+
+```text
+input NCHW -> A MK
+M = N * out_h * out_w
+K = in_channels * kernel_h * kernel_w
+```
+
+也就是把每个卷积窗口拉平成 A 的一行。
+
+第二步 `oihw_to_ko_i32`：
+
+```text
+weight OIHW -> B KO
+O = out_channels
+K = in_channels * kernel_h * kernel_w
+```
+
+也就是把每个卷积核按同样的 `k` 顺序拉平，放成矩阵 B 的列。
+
+第三步复用 matmul：
+
+```text
+A MK * B KO = C MO
+```
+
+第四步解释输出：
+
+```text
+C[m][o] 对应 output[n][oc][oh][ow]
+m = n * out_h * out_w + oh * out_w + ow
+o = oc
+```
+
+当前 smoke 使用 `1x1x4x4` 输入和 `1x1x3x3` 卷积核：
+
+```text
+NCHW input  = [1, 1, 4, 4]
+OIHW weight = [1, 1, 3, 3]
+im2col A    = [4, 9]
+KO weight   = [9, 1]
+matmul C    = [4, 1]
+```
+
+第一版 lowered conv 不加 bias；后续可以增加一个 bias/add kernel，或在
+matmul reduce 阶段扩展 bias 输入。
+
+## 22. MaxPool2D 为什么可以直接写 kernel？
+
+MaxPool 没有类似卷积/矩阵乘的归约维度重排需求。每个输出元素只需要在
+对应窗口里取最大值：
+
+```text
+output[n][c][oh][ow] =
+  max input[n][c][oh * stride_h + kh][ow * stride_w + kw]
+```
+
+所以第一版 `maxpool_i32` 直接让一个 thread 负责一个 output element，
+在窗口内部串行扫描。
+
+注意：device kernel 当前没有初始化有效栈指针，kernel 代码应避免让编译器
+生成栈访问。`maxpool_i32` 因此保持实现简单，避免过多局部变量导致保存
+callee-saved 寄存器。

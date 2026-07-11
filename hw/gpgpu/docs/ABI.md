@@ -322,13 +322,44 @@ C[m][o] -> m * O + o
 `GPGPUTensorDesc` 中的 stride 字段保留给后续 view/transpose/padding
 支持，第一版 matmul 不依赖 stride 计算 offset。
 
+第一版 lowered conv2d 不使用 direct conv kernel，而是拆成：
+
+```text
+im2col_i32:
+  input NCHW -> A MK
+
+oihw_to_ko_i32:
+  weight OIHW -> B KO
+
+matmul_partial_i32 + matmul_reduce_i32:
+  A MK * B KO -> C MO
+```
+
+其中：
+
+```text
+M = N * out_h * out_w
+K = in_channels * kernel_h * kernel_w
+O = out_channels
+```
+
+第一版 maxpool2d 使用 direct kernel：
+
+```text
+kernel_args -> GPGPUMaxPool2DArgs
+```
+
+每个 thread 计算一个 NCHW output element，并在对应池化窗口内串行取最大值。
+
 device kernel 的类型解释由 `kernel_addr` 决定：ReLU kernel 把 `x10`
 解释为 `GPGPUReluArgs *`，Linear kernel 把 `x10` 解释为
 `GPGPULinearArgs *` / `GPGPULinearPartialArgs *` /
 `GPGPULinearReduceArgs *`，Matmul kernel 把 `x10` 解释为
-`GPGPUMatmulPartialArgs *` / `GPGPUMatmulReduceArgs *`，Conv2D kernel
-把 `x10` 解释为 `GPGPUConv2DArgs *`。第一版不在 args struct 中加入
-统一的 op type 或 magic header。
+`GPGPUMatmulPartialArgs *` / `GPGPUMatmulReduceArgs *`，Im2Col kernel
+把 `x10` 解释为 `GPGPUIm2ColArgs *`，OIHW-to-KO kernel 把 `x10` 解释为
+`GPGPUOihwToKoArgs *`，MaxPool kernel 把 `x10` 解释为
+`GPGPUMaxPool2DArgs *`。第一版不在 args struct 中加入统一的 op type 或
+magic header。
 
 第一版约定：
 

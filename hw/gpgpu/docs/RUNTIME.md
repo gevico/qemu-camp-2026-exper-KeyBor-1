@@ -54,6 +54,8 @@ GPGPUConv2DArgs / GPGPUReluArgs / GPGPUMaxPool2DArgs / GPGPULinearArgs =
   per-op kernel args layout
 GPGPUMatmulPartialArgs / GPGPUMatmulReduceArgs =
   two-stage matrix multiply args layout
+GPGPUIm2ColArgs / GPGPUOihwToKoArgs =
+  conv lowering args layout
 GPGPUNodeDesc / GPGPUNetworkDesc =
   host-side execution plan
 ```
