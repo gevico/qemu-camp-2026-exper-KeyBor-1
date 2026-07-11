@@ -23,9 +23,24 @@ q_value = round(real_value * 256)
 We do not need PyTorch for export because the upstream `model.pt` is a zip
 archive with raw float32 tensor storages in a stable order for this model.
 
-`mnist_test0_q8.h` stores MNIST test-set image 0 and its label. Pixels are
-normalized with the same Q8.8 scale:
+`mnist_samples_q8.h` stores a small set of real MNIST test-set images and
+labels. Generate it with:
+
+```text
+python3 tools/export_mnist_samples.py --count 5
+```
+
+Pixels are normalized with the same Q8.8 scale:
 
 ```text
 q_pixel = round(pixel_u8 / 255 * 256)
 ```
+
+The baremetal CPU reads one sample array at a time and uploads it into the
+input tensor in GPU VRAM before launching the LeNet node sequence.
+
+The baremetal LeNet path prints per-sample `expected` and `pred` values plus a
+`lenet_correct/lenet_total` summary. This is currently a diagnostic check: it
+proves that multiple real inputs flow through the runtime, and it also exposes
+remaining numerical/preprocessing gaps instead of hiding them behind one
+hand-picked sample.

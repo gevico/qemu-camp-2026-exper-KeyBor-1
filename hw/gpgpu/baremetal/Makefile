@@ -5,6 +5,9 @@ OBJDUMP := $(CROSS_COMPILE)objdump
 
 BUILD_DIR := build
 SRC_DIR := src
+TEST_DIR := tests
+TEST_SRC_DIR := $(TEST_DIR)/src
+TEST_INCLUDE_DIR := $(TEST_DIR)/include
 INCLUDE_DIR := include
 SCRIPT_DIR := scripts
 KERNEL_DIR := $(SRC_DIR)/kernels
@@ -27,11 +30,39 @@ IM2COL_I32_KERNEL_INC := $(BUILD_DIR)/im2col_i32_kernel.inc
 OIHW_TO_KO_I32_KERNEL_INC := $(BUILD_DIR)/oihw_to_ko_i32_kernel.inc
 MO_TO_NCHW_I32_KERNEL_INC := $(BUILD_DIR)/mo_to_nchw_i32_kernel.inc
 MAXPOOL_I32_KERNEL_INC := $(BUILD_DIR)/maxpool_i32_kernel.inc
+KERNEL_INCS := \
+	$(THREAD_ADD_KERNEL_INC) \
+	$(STACK_SMOKE_KERNEL_INC) \
+	$(RELU_I32_KERNEL_INC) \
+	$(LINEAR_I32_KERNEL_INC) \
+	$(LINEAR_PARTIAL_I32_KERNEL_INC) \
+	$(LINEAR_REDUCE_I32_KERNEL_INC) \
+	$(MATMUL_PARTIAL_I32_KERNEL_INC) \
+	$(MATMUL_REDUCE_I32_KERNEL_INC) \
+	$(IM2COL_I32_KERNEL_INC) \
+	$(OIHW_TO_KO_I32_KERNEL_INC) \
+	$(MO_TO_NCHW_I32_KERNEL_INC) \
+	$(MAXPOOL_I32_KERNEL_INC)
+TEST_SRCS := \
+	test_common.c \
+	smoke.c \
+	basic_smoke.c \
+	thread_add_smoke.c \
+	stack_smoke.c \
+	relu_smoke.c \
+	linear_smoke.c \
+	matmul_smoke.c \
+	qmatmul_smoke.c \
+	layout_smoke.c \
+	conv_smoke.c \
+	maxpool_smoke.c \
+	lenet_smoke.c
+TEST_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(TEST_SRCS))
 
 CFLAGS := -march=rv64imac -mabi=lp64 -mcmodel=medany
 CFLAGS += -Wall -Wextra -ffreestanding -fno-builtin -fno-common
 CFLAGS += -O2 -I. -I$(INCLUDE_DIR) -I$(DRIVER_DIR)/include
-CFLAGS += -I$(RUNTIME_DIR)/include
+CFLAGS += -I$(TEST_INCLUDE_DIR) -I$(RUNTIME_DIR)/include
 KERNEL_CFLAGS := -march=rv32im -mabi=ilp32 -Wall -Wextra
 KERNEL_CFLAGS += -ffreestanding -fno-builtin -fno-common -fno-pic
 KERNEL_CFLAGS += -fno-asynchronous-unwind-tables -fno-unwind-tables -Os
@@ -41,6 +72,7 @@ LDFLAGS := -nostdlib -T $(SCRIPT_DIR)/linker.ld
 OBJS := \
 	$(BUILD_DIR)/start.o \
 	$(BUILD_DIR)/main.o \
+	$(TEST_OBJS) \
 	$(BUILD_DIR)/gpgpu_runtime.o \
 	$(BUILD_DIR)/gpgpu_pci.o
 
@@ -54,7 +86,10 @@ $(BUILD_DIR):
 $(BUILD_DIR)/start.o: $(SCRIPT_DIR)/start.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(THREAD_ADD_KERNEL_INC) $(STACK_SMOKE_KERNEL_INC) $(RELU_I32_KERNEL_INC) $(LINEAR_I32_KERNEL_INC) $(LINEAR_PARTIAL_I32_KERNEL_INC) $(LINEAR_REDUCE_I32_KERNEL_INC) $(MATMUL_PARTIAL_I32_KERNEL_INC) $(MATMUL_REDUCE_I32_KERNEL_INC) $(IM2COL_I32_KERNEL_INC) $(OIHW_TO_KO_I32_KERNEL_INC) $(MO_TO_NCHW_I32_KERNEL_INC) $(MAXPOOL_I32_KERNEL_INC) | $(BUILD_DIR)
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/%.o: $(TEST_SRC_DIR)/%.c $(KERNEL_INCS) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/thread_add_kernel.o: $(GPGPU_KERNEL_DIR)/thread_add_kernel.c | $(BUILD_DIR)
