@@ -13,6 +13,7 @@
 #include "hw/pci/pci_device.h"
 #include "hw/pci/pci_ids.h"
 #include "qom/object.h"
+#include "backend/include/gpgpu_backend_comm.h"
 
 /*
  * ============================================================================
@@ -280,6 +281,10 @@ struct GPGPUState {
 
     /*-- SIMT 执行上下文 (CTRL 设备) --*/
     GPGPUSIMTContext simt;          /* 当前线程的执行上下文 */
+
+    /*-- 执行后端 (可插拔) --*/
+    char *backend_name;                  /* 后端名称 ("rv32"|"vortex") */
+    struct gpgpu_backend *backend;       /* 后端实例 */
 };
 
 #endif /* HW_GPGPU_H */

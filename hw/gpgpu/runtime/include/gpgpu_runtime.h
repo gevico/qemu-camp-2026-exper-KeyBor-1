@@ -13,6 +13,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "gpgpu_builtins.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif

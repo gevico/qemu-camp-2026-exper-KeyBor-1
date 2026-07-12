@@ -20,7 +20,6 @@
 #include "migration/vmstate.h"
 
 #include "gpgpu.h"
-#include "arch/riscv/gpgpu_core.h"
 
 /* TODO: Implement MMIO control register read */
 static uint64_t gpgpu_ctrl_read(void *opaque, hwaddr addr, unsigned size)
@@ -31,6 +30,16 @@ static uint64_t gpgpu_ctrl_read(void *opaque, hwaddr addr, unsigned size)
     // // 3. 获取对应的 Class 指针
     // PCIDeviceClass *pc = PCI_DEVICE_GET_CLASS(pdev);
     uint64_t value = 0;
+
+    /* 后端可选的寄存器接管 */
+    if (s->backend && s->backend->dev_iface &&
+        s->backend->dev_iface->reg_read) {
+        uint32_t v32;
+        if (s->backend->dev_iface->reg_read(s, (uint32_t)addr, &v32)) {
+            return v32;
+        }
+    }
+
     switch(addr) {
         case GPGPU_REG_DEV_ID:
             value = 0x47505055;
@@ -165,79 +174,85 @@ static void gpgpu_ctrl_update_status(GPGPUState *s)
 }
 
 
+/*
+ * dev_iface helper: 供 backend 通过 GPGPUBackendDevice 回调访问设备资源。
+ * 传参 void *dev 强转为 GPGPUState*。
+ */
+static uint8_t *gpgpu_vram_get_ptr(void *dev) {
+    return ((GPGPUState *)dev)->vram_ptr;
+}
+static uint64_t gpgpu_vram_get_size(void *dev) {
+    return ((GPGPUState *)dev)->vram_size;
+}
+static void gpgpu_dev_set_error(void *dev, uint32_t code) {
+    ((GPGPUState *)dev)->error_status |= code;
+}
+
 static void gpgpu_dispatch_kernel(GPGPUState *s)
 {
-    bool is_illegal_param = ((s->kernel.kernel_addr >= s->vram_size) || (s->kernel.kernel_args >= s->vram_size) || ((s->kernel.grid_dim[0] <= 0) || (s->kernel.grid_dim[1] <= 0) || (s->kernel.grid_dim[2] <= 0)) ||
-                             ((s->kernel.block_dim[0] <= 0) || (s->kernel.block_dim[1] <= 0) || (s->kernel.block_dim[2] <= 0)));
-    if(!(s->global_ctrl & GPGPU_CTRL_ENABLE) || (s->global_status & GPGPU_STATUS_BUSY) || is_illegal_param) {
+    /* ---- 参数校验 ---- */
+    bool illegal = (s->kernel.kernel_addr >= s->vram_size) ||
+                   (s->kernel.kernel_args >= s->vram_size) ||
+                   (s->kernel.grid_dim[0] <= 0 ||
+                    s->kernel.grid_dim[1] <= 0 ||
+                    s->kernel.grid_dim[2] <= 0) ||
+                   (s->kernel.block_dim[0] <= 0 ||
+                    s->kernel.block_dim[1] <= 0 ||
+                    s->kernel.block_dim[2] <= 0);
+
+    if (!(s->global_ctrl & GPGPU_CTRL_ENABLE) ||
+        (s->global_status & GPGPU_STATUS_BUSY) ||
+        illegal) {
         s->global_status |= GPGPU_STATUS_ERROR;
         return;
     }
 
-    // uint32_t grid_size = s->kernel.grid_dim[0] * s->kernel.grid_dim[1] * s->kernel.grid_dim[2];
-    // 一个block中有多少个线程
-    uint64_t grid_size = (uint64_t)s->kernel.grid_dim[0] *
-                         s->kernel.grid_dim[1] *
-                         s->kernel.grid_dim[2];
-    uint64_t block_size_64 = (uint64_t)s->kernel.block_dim[0] *
-                             s->kernel.block_dim[1] *
-                             s->kernel.block_dim[2];
-    uint64_t total_threads = grid_size * block_size_64;
-    uint64_t stack_total_size = total_threads * GPGPU_STACK_SIZE_PER_THREAD;
-    uint32_t block_size;
-    uint32_t stack_base;
-
-    if (block_size_64 == 0 || block_size_64 > UINT32_MAX ||
-        total_threads == 0 ||
-        stack_total_size > s->vram_size ||
-        s->vram_size - stack_total_size > UINT32_MAX) {
-        s->error_status |= GPGPU_ERR_VRAM_FAULT;
+    if (!s->backend) {
+        s->error_status |= GPGPU_ERR_INVALID_CMD;
         s->global_status |= GPGPU_STATUS_ERROR;
         return;
     }
 
-    block_size = block_size_64;
-    stack_base = s->vram_size - stack_total_size;
-    stack_base &= ~(GPGPU_STACK_ALIGN - 1);
+    /* ---- 构造 dispatch 参数 ---- */
+    struct gpgpu_dispatch_params params = {
+        .kernel_addr    = s->kernel.kernel_addr,
+        .kernel_args    = s->kernel.kernel_args,
+        .grid_dim       = { s->kernel.grid_dim[0],
+                            s->kernel.grid_dim[1],
+                            s->kernel.grid_dim[2] },
+        .block_dim      = { s->kernel.block_dim[0],
+                            s->kernel.block_dim[1],
+                            s->kernel.block_dim[2] },
+        .shared_mem_size = s->kernel.shared_mem_size,
+    };
 
+    /* ---- 委托后端执行 ---- */
     s->global_status |= GPGPU_STATUS_BUSY;
-    //根据warpsize切分warp个数
-    uint32_t warp_num = (block_size + (s->warp_size - 1)) / s->warp_size;
-    for(int i = 0; i < s->kernel.grid_dim[0]; ++i) {
-        for(int j = 0; j < s->kernel.grid_dim[1]; ++j) {
-            for(int k = 0; k < s->kernel.grid_dim[2]; ++k){
-                const uint32_t block_id[3] = {i, j, k};
-                uint32_t block_id_linear = k * (s->kernel.grid_dim[0] * s->kernel.grid_dim[1]) + j * s->kernel.grid_dim[0] + i;
-                for(int m = 0; m < warp_num; ++m) {
-                    GPGPUWarp warp = {0};
-                    uint32_t thread_id_base = m * s->warp_size;
-                    uint32_t remaining = block_size - thread_id_base;
-                    uint32_t thread_num = MIN(s->warp_size, remaining);
-                    for(int n = 0; n < thread_num; ++n)
-                        warp.active_mask |= (1u << n);
-                    gpgpu_core_init_warp(&warp, s->kernel.kernel_addr,
-                                s->kernel.kernel_args,
-                                thread_id_base, block_id,
-                                thread_num,
-                                m, block_id_linear,
-                                block_size, stack_base,
-                                GPGPU_STACK_SIZE_PER_THREAD);
-                    if (gpgpu_core_exec_warp(s, &warp, 10) < 0) {
-                        s->global_status &= ~GPGPU_STATUS_BUSY;
-                        return;
-                    }
-                }
-            }
-        }
-    }
+
+    int ret = s->backend->ops->dispatch(s->backend, s, &params);
+
     s->global_status &= ~GPGPU_STATUS_BUSY;
-    s->global_status |= GPGPU_STATUS_READY;
+    if (ret < 0) {
+        s->global_status |= GPGPU_STATUS_ERROR;
+    } else {
+        s->global_status |= GPGPU_STATUS_READY;
+    }
 }
 /* TODO: Implement MMIO control register write */
 static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
                              unsigned size)
 {
     GPGPUState *s = GPGPU(opaque);
+
+    /* 后端可选的寄存器接管 */
+    if (s->backend && s->backend->dev_iface &&
+        s->backend->dev_iface->reg_write) {
+        if (s->backend->dev_iface->reg_write(s, (uint32_t)addr, (uint32_t)val)) {
+            gpgpu_ctrl_update_status(s);
+            return;
+        }
+    }
+
     switch(addr) {
         case GPGPU_REG_GLOBAL_CTRL:
             s->global_ctrl = val;
@@ -510,6 +525,34 @@ static void gpgpu_realize(PCIDevice *pdev, Error **errp)
 
     msi_init(pdev, 0, 1, true, false, errp);
 
+    /* ---- 执行后端 ---- */
+    if (!s->backend_name) {
+        s->backend_name = g_strdup("rv32");  /* 默认 */
+    }
+
+    s->backend = gpgpu_backend_create(s->backend_name);
+    if (!s->backend) {
+        error_setg(errp, "GPGPU: unknown backend '%s'", s->backend_name);
+        g_free(s->vram_ptr);
+        return;
+    }
+
+    /* dev_iface: 设备侧资源回调 */
+    s->backend->dev_iface = g_new0(struct gpgpu_backend_dev_iface, 1);
+    s->backend->dev_iface->vram_ptr =
+        (uint8_t *(*)(void *))gpgpu_vram_get_ptr;   /* 见下方 helper */
+    s->backend->dev_iface->vram_size =
+        (uint64_t (*)(void *))gpgpu_vram_get_size;
+    s->backend->dev_iface->set_error = gpgpu_dev_set_error;
+
+    if (s->backend->ops->init(s->backend, s) < 0) {
+        error_setg(errp, "GPGPU: backend '%s' init failed",
+                   s->backend_name);
+        g_free(s->vram_ptr);
+        return;
+    }
+
+    /* timers */
     s->dma_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL, gpgpu_dma_complete, s);
     s->kernel_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL,
                                    gpgpu_kernel_complete, s);
@@ -521,6 +564,12 @@ static void gpgpu_exit(PCIDevice *pdev)
 {
     GPGPUState *s = GPGPU(pdev);
 
+    if (s->backend) {
+        s->backend->ops->destroy(s->backend);
+        g_free(s->backend->dev_iface);
+        g_free(s->backend);
+    }
+    g_free(s->backend_name);
     timer_free(s->dma_timer);
     timer_free(s->kernel_timer);
     g_free(s->vram_ptr);
@@ -556,6 +605,7 @@ static const Property gpgpu_properties[] = {
                        GPGPU_DEFAULT_WARP_SIZE),
     DEFINE_PROP_UINT64("vram_size", GPGPUState, vram_size,
                        GPGPU_DEFAULT_VRAM_SIZE),
+    DEFINE_PROP_STRING("backend", GPGPUState, backend_name),
 };
 
 static const VMStateDescription vmstate_gpgpu = {
@@ -587,6 +637,7 @@ static void gpgpu_class_init(ObjectClass *klass, const void *data)
 
     device_class_set_legacy_reset(dc, gpgpu_reset);
     dc->desc = "Educational GPGPU Device";
+    gpgpu_backend_registry_init();
     dc->vmsd = &vmstate_gpgpu;
     device_class_set_props(dc, gpgpu_properties);
     set_bit(DEVICE_CATEGORY_MISC, dc->categories);

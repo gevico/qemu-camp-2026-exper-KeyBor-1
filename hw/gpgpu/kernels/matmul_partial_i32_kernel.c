@@ -1,19 +1,12 @@
 #include "gpgpu_nn.h"
-
+#include "gpgpu_builtins.h"
 #include <stdint.h>
-
-#define GPGPU_CORE_CTRL_BASE 0x80000000u
-
-#define CTRL_THREAD_ID_X 0x00u
-#define CTRL_BLOCK_ID_X  0x10u
-#define CTRL_BLOCK_ID_Y  0x14u
 
 void _start(GPGPUMatmulPartialArgs *args)
 {
-    volatile uint32_t *ctrl = (volatile uint32_t *)GPGPU_CORE_CTRL_BASE;
-    uint32_t k = ctrl[CTRL_THREAD_ID_X / sizeof(uint32_t)];
-    uint32_t m = ctrl[CTRL_BLOCK_ID_X / sizeof(uint32_t)];
-    uint32_t o = ctrl[CTRL_BLOCK_ID_Y / sizeof(uint32_t)];
+    uint32_t k = gpgpu_thread_id_x();
+    uint32_t m = gpgpu_block_id_x();
+    uint32_t o = gpgpu_block_id_y();
     uint32_t a_offset = m * args->k + k;
     uint32_t b_offset = k * args->o + o;
     uint32_t partial_offset = (m * args->o + o) * args->k + k;

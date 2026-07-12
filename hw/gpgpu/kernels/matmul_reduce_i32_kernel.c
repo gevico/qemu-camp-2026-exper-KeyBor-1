@@ -1,17 +1,11 @@
 #include "gpgpu_nn.h"
-
+#include "gpgpu_builtins.h"
 #include <stdint.h>
-
-#define GPGPU_CORE_CTRL_BASE 0x80000000u
-
-#define CTRL_THREAD_ID_X 0x00u
-#define CTRL_BLOCK_ID_X  0x10u
 
 void _start(GPGPUMatmulReduceArgs *args)
 {
-    volatile uint32_t *ctrl = (volatile uint32_t *)GPGPU_CORE_CTRL_BASE;
-    uint32_t o = ctrl[CTRL_THREAD_ID_X / sizeof(uint32_t)];
-    uint32_t m = ctrl[CTRL_BLOCK_ID_X / sizeof(uint32_t)];
+    uint32_t o = gpgpu_thread_id_x();
+    uint32_t m = gpgpu_block_id_x();
     int32_t *partial = (int32_t *)(uintptr_t)args->partial.data;
     int32_t *c = (int32_t *)(uintptr_t)args->c.data;
     int32_t *bias = (int32_t *)(uintptr_t)args->bias.data;

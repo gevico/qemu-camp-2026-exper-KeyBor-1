@@ -18,6 +18,7 @@
 
 /* 前向声明 */
 typedef struct GPGPUState GPGPUState;
+struct gpgpu_dispatch_params;
 
 /*
  * ============================================================================
@@ -156,5 +157,16 @@ int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles);
  * 返回: 0 成功，-1 错误
  */
 int gpgpu_core_exec_kernel(GPGPULane *lane, GPGPUState *s);
+
+/**
+ * gpgpu_core_dispatch_kernel - 完整的 kernel dispatch (grid→block→warp)
+ * @dev: GPGPUState 指针
+ * @p:   dispatch 参数 (kernel_addr, kernel_args, grid_dim, block_dim, ...)
+ *
+ * 包含参数校验、栈分配、三重循环调度。
+ * 返回: 0 成功，-1 错误
+ */
+int gpgpu_core_dispatch_kernel(void *dev,
+                               const struct gpgpu_dispatch_params *p);
 
 #endif /* HW_GPGPU_CORE_H */

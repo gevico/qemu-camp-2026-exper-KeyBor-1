@@ -9,9 +9,10 @@
 
 #include "qemu/osdep.h"
 #include "qemu/log.h"
-#include "../../gpgpu.h"
+#include "gpgpu.h"
 #include "gpgpu_core.h"
 #include "gpgpu_riscv.h"
+#include "../../../include/gpgpu_backend_comm.h"
 #include <math.h>
 
 #define MHART_ID(block_id_linear, warp_id, thread_id) \
@@ -88,6 +89,80 @@ int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles)
             if (ret == 1) warp->active_mask &= ~(1u << i);
         }
     }
+    return 0;
+}
+
+/* 完整的 kernel dispatch: grid → block → warp */
+int gpgpu_core_dispatch_kernel(void *dev,
+                               const struct gpgpu_dispatch_params *p)
+{
+    GPGPUState *s = (GPGPUState *)dev;
+    uint64_t block_size_64, total_threads, stack_total_size;
+    uint32_t block_size, stack_base, warp_num;
+
+    /* --- 参数校验 --- */
+    if (p->kernel_addr >= s->vram_size ||
+        p->kernel_args >= s->vram_size) {
+        s->error_status |= GPGPU_ERR_INVALID_CMD;
+        return -1;
+    }
+
+    block_size_64 = (uint64_t)p->block_dim[0] *
+                    p->block_dim[1] * p->block_dim[2];
+    total_threads = (uint64_t)p->grid_dim[0] * p->grid_dim[1] *
+                    p->grid_dim[2] * block_size_64;
+    stack_total_size = total_threads * GPGPU_STACK_SIZE_PER_THREAD;
+
+    if (block_size_64 == 0 || block_size_64 > UINT32_MAX ||
+        total_threads == 0 ||
+        stack_total_size > s->vram_size ||
+        s->vram_size - stack_total_size > UINT32_MAX) {
+        s->error_status |= GPGPU_ERR_VRAM_FAULT;
+        return -1;
+    }
+
+    block_size = (uint32_t)block_size_64;
+    stack_base = (uint32_t)(s->vram_size - stack_total_size);
+    stack_base &= ~(GPGPU_STACK_ALIGN - 1);
+
+    /* --- 三重循环: grid → block → warp --- */
+    warp_num = (block_size + (s->warp_size - 1)) / s->warp_size;
+
+    for (int bx = 0; bx < (int)p->grid_dim[0]; ++bx) {
+        for (int by = 0; by < (int)p->grid_dim[1]; ++by) {
+            for (int bz = 0; bz < (int)p->grid_dim[2]; ++bz) {
+                const uint32_t block_id[3] = {bx, by, bz};
+                uint32_t block_id_linear =
+                    bz * (p->grid_dim[0] * p->grid_dim[1]) +
+                    by * p->grid_dim[0] + bx;
+
+                for (int w = 0; w < (int)warp_num; ++w) {
+                    GPGPUWarp warp = {0};
+                    uint32_t tid_base = w * s->warp_size;
+                    uint32_t remaining = block_size - tid_base;
+                    uint32_t thread_num =
+                        MIN(s->warp_size, remaining);
+
+                    for (int t = 0; t < (int)thread_num; ++t) {
+                        warp.active_mask |= (1u << t);
+                    }
+
+                    gpgpu_core_init_warp(&warp,
+                        (uint32_t)p->kernel_addr,
+                        (uint32_t)p->kernel_args,
+                        tid_base, block_id,
+                        thread_num, w, block_id_linear,
+                        block_size, stack_base,
+                        GPGPU_STACK_SIZE_PER_THREAD);
+
+                    if (gpgpu_core_exec_warp(s, &warp, 10) < 0) {
+                        return -1;
+                    }
+                }
+            }
+        }
+    }
+
     return 0;
 }
 

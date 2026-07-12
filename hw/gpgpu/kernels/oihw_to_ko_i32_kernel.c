@@ -1,21 +1,13 @@
 #include "gpgpu_nn.h"
-
+#include "gpgpu_builtins.h"
 #include <stdint.h>
-
-#define GPGPU_CORE_CTRL_BASE 0x80000000u
-
-#define CTRL_THREAD_ID_X 0x00u
-#define CTRL_BLOCK_ID_X  0x10u
-#define CTRL_BLOCK_ID_Y  0x14u
-#define CTRL_BLOCK_ID_Z  0x18u
 
 void _start(GPGPUOihwToKoArgs *args)
 {
-    volatile uint32_t *ctrl = (volatile uint32_t *)GPGPU_CORE_CTRL_BASE;
-    uint32_t kw = ctrl[CTRL_THREAD_ID_X / sizeof(uint32_t)];
-    uint32_t oc = ctrl[CTRL_BLOCK_ID_X / sizeof(uint32_t)];
-    uint32_t ic = ctrl[CTRL_BLOCK_ID_Y / sizeof(uint32_t)];
-    uint32_t kh = ctrl[CTRL_BLOCK_ID_Z / sizeof(uint32_t)];
+    uint32_t kw = gpgpu_thread_id_x();
+    uint32_t oc = gpgpu_block_id_x();
+    uint32_t ic = gpgpu_block_id_y();
+    uint32_t kh = gpgpu_block_id_z();
     uint32_t k = ic * args->kernel_h * args->kernel_w +
                  kh * args->kernel_w + kw;
     uint32_t input_offset = oc * args->input.stride_n +

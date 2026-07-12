@@ -1,25 +1,15 @@
 #include "gpgpu_nn.h"
-
+#include "gpgpu_builtins.h"
 #include <stdint.h>
-
-#define GPGPU_CORE_CTRL_BASE 0x80000000u
-
-#define CTRL_THREAD_ID_X 0x00u
-#define CTRL_THREAD_ID_Y 0x04u
-#define CTRL_THREAD_ID_Z 0x08u
-#define CTRL_BLOCK_ID_X  0x10u
-#define CTRL_BLOCK_ID_Y  0x14u
-#define CTRL_BLOCK_ID_Z  0x18u
 
 void _start(GPGPUIm2ColArgs *args)
 {
-    volatile uint32_t *ctrl = (volatile uint32_t *)GPGPU_CORE_CTRL_BASE;
-    uint32_t kw = ctrl[CTRL_THREAD_ID_X / sizeof(uint32_t)];
-    uint32_t kh = ctrl[CTRL_THREAD_ID_Y / sizeof(uint32_t)];
-    uint32_t ic = ctrl[CTRL_THREAD_ID_Z / sizeof(uint32_t)];
-    uint32_t n = ctrl[CTRL_BLOCK_ID_X / sizeof(uint32_t)];
-    uint32_t oh = ctrl[CTRL_BLOCK_ID_Y / sizeof(uint32_t)];
-    uint32_t ow = ctrl[CTRL_BLOCK_ID_Z / sizeof(uint32_t)];
+    uint32_t kw = gpgpu_thread_id_x();
+    uint32_t kh = gpgpu_thread_id_y();
+    uint32_t ic = gpgpu_thread_id_z();
+    uint32_t n = gpgpu_block_id_x();
+    uint32_t oh = gpgpu_block_id_y();
+    uint32_t ow = gpgpu_block_id_z();
     int32_t ih = (int32_t)(oh * args->stride_h + kh) -
                  (int32_t)args->pad_h;
     int32_t iw = (int32_t)(ow * args->stride_w + kw) -

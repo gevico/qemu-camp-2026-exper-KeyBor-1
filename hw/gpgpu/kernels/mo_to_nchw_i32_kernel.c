@@ -1,21 +1,13 @@
 #include "gpgpu_nn.h"
-
+#include "gpgpu_builtins.h"
 #include <stdint.h>
-
-#define GPGPU_CORE_CTRL_BASE 0x80000000u
-
-#define CTRL_THREAD_ID_X 0x00u
-#define CTRL_BLOCK_ID_X  0x10u
-#define CTRL_BLOCK_ID_Y  0x14u
-#define CTRL_BLOCK_ID_Z  0x18u
 
 void _start(GPGPUMoToNchwArgs *args)
 {
-    volatile uint32_t *ctrl = (volatile uint32_t *)GPGPU_CORE_CTRL_BASE;
-    uint32_t ow = ctrl[CTRL_THREAD_ID_X / sizeof(uint32_t)];
-    uint32_t n = ctrl[CTRL_BLOCK_ID_X / sizeof(uint32_t)];
-    uint32_t c = ctrl[CTRL_BLOCK_ID_Y / sizeof(uint32_t)];
-    uint32_t oh = ctrl[CTRL_BLOCK_ID_Z / sizeof(uint32_t)];
+    uint32_t ow = gpgpu_thread_id_x();
+    uint32_t n = gpgpu_block_id_x();
+    uint32_t c = gpgpu_block_id_y();
+    uint32_t oh = gpgpu_block_id_z();
     uint32_t m = n * args->h * args->w + oh * args->w + ow;
     int32_t *input = (int32_t *)(uintptr_t)args->input.data;
     int32_t *output = (int32_t *)(uintptr_t)args->output.data;

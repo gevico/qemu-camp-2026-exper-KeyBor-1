@@ -70,6 +70,9 @@ KERNEL_CFLAGS := -march=rv32im -mabi=ilp32 -Wall -Wextra
 KERNEL_CFLAGS += -ffreestanding -fno-builtin -fno-common -fno-pic
 KERNEL_CFLAGS += -fno-asynchronous-unwind-tables -fno-unwind-tables -Os
 KERNEL_CFLAGS += -I$(RUNTIME_DIR)/include
+KERNEL_VORTEX_CFLAGS := $(KERNEL_CFLAGS) -DGPGPU_BACKEND_VORTEX
+# vortex CSR builtins 需要 zicsr 扩展
+KERNEL_VORTEX_CFLAGS := $(subst rv32im,rv32im_zicsr,$(KERNEL_VORTEX_CFLAGS))
 LDFLAGS := -nostdlib -T $(SCRIPT_DIR)/linker.ld
 
 OBJS := \
@@ -310,3 +313,49 @@ run-uart: $(UART_TARGET)
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+# ---- Vortex 后端内核编译 (使用 CSR builtins) ----
+VORTEX_KERNEL_NAMES := \
+	thread_add_kernel stack_smoke_kernel \
+	relu_i32_kernel linear_i32_kernel linear_partial_i32_kernel linear_reduce_i32_kernel \
+	matmul_partial_i32_kernel matmul_reduce_i32_kernel \
+	im2col_i32_kernel oihw_to_ko_i32_kernel mo_to_nchw_i32_kernel maxpool_i32_kernel
+
+VORTEX_INC_DIR := $(BUILD_DIR)/vortex_inc
+
+# .o / .bin / .dis 放在 build/ 下，加 vortex_ 前缀
+$(BUILD_DIR)/vortex_%.o: $(GPGPU_KERNEL_DIR)/%.c | $(BUILD_DIR)
+	$(CC) $(KERNEL_VORTEX_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/vortex_%.bin: $(BUILD_DIR)/vortex_%.o
+	$(OBJCOPY) -O binary -j .text $< $@
+
+$(BUILD_DIR)/vortex_%.dis: $(BUILD_DIR)/vortex_%.o
+	$(OBJDUMP) -dr $< > $@
+
+# .inc 生成到独立目录，变量名与 rv32 版本一致
+# (e.g. vortex_inc/thread_add_kernel.inc 里仍然是 thread_add_kernel_code[])
+
+$(VORTEX_INC_DIR):
+	mkdir -p $(VORTEX_INC_DIR)
+
+$(VORTEX_INC_DIR)/%.inc: $(BUILD_DIR)/vortex_%.bin $(BUILD_DIR)/vortex_%.dis | $(VORTEX_INC_DIR)
+	printf 'static const uint32_t %s_code[] = {\n' $* > $@
+	od -An -v -tx4 $< | \
+	    awk '{ for (i = 1; i <= NF; ++i) printf "    0x%s,\n", $$i }' >> $@
+	printf '};\n' >> $@
+
+VORTEX_INCS := $(patsubst %,$(VORTEX_INC_DIR)/%.inc,$(VORTEX_KERNEL_NAMES))
+
+.PHONY: vortex-kernels
+vortex-kernels: $(VORTEX_INCS)
+
+# ---- Vortex smoke: 用 vortex 内核覆盖 rv32 内核后运行 ----
+.PHONY: vortex-smoke run-vortex
+vortex-smoke: $(VORTEX_INCS)
+	cp $(VORTEX_INC_DIR)/*.inc $(BUILD_DIR)/
+	$(MAKE) run-vortex
+
+run-vortex: $(TARGET)
+	qemu-system-riscv64 -machine virt -m 256M -nographic -bios none \
+	    -device gpgpu,backend=vortex -kernel $(TARGET)
