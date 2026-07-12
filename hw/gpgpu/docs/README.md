@@ -12,6 +12,8 @@
 - [RUNTIME.md](RUNTIME.md): 最小 runtime API 和职责。
 - [BAREMETAL_PCI.md](BAREMETAL_PCI.md): QEMU `virt` 裸机 PCI/ECAM/BAR 说明。
 - [DEV_ENV.md](DEV_ENV.md): Colima/Docker 开发环境。
+- [vortex-csr-evidence.md](vortex-csr-evidence.md): Vortex CSR、thread/warp/block 语义证据。
+- [VORTEX_BACKEND_ISSUES.md](VORTEX_BACKEND_ISSUES.md): Vortex backend 接入后的已知问题和后续追踪清单。
 
 ## 当前阶段
 
