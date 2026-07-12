@@ -1,6 +1,9 @@
 /GNUmakefile
 /build/
 /.cache/
+/.ccache/
+/trace/ramulator.log.*
+/hw/gpgpu/baremetal/trace/
 /.vscode/
 *.pyc
 .sdk
